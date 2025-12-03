@@ -18,8 +18,20 @@ import EventsList from "./pages/EventsList";
 import AddEvent from "./pages/AddEvent";
 import EditEvent from "./pages/EditEvent";
 
+// Title component to set document title
+const PageTitle = ({ title }) => {
+  useEffect(() => {
+    document.title = `${title} | Datalytics Admin `;
+    return () => {
+      document.title = "Datalytics Admin";
+    };
+  }, [title]);
+
+  return null;
+};
+
 // Protected Route Component - WITH ALERT
-const ProtectedRoute = ({ children, requireCurrentBatch = false }) => {
+const ProtectedRoute = ({ children, requireCurrentBatch = false, title }) => {
   const [checking, setChecking] = useState(true);
   const [hasPermission, setHasPermission] = useState(false);
   const [showAlert, setShowAlert] = useState(false);
@@ -72,15 +84,25 @@ const ProtectedRoute = ({ children, requireCurrentBatch = false }) => {
 
   if (checking) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-900 text-slate-100">
-        <div className="animate-pulse text-sm text-slate-400">
-          Checking permissions...
+      <>
+        <PageTitle title="Loading..." />
+        <div className="min-h-screen flex items-center justify-center bg-slate-900 text-slate-100">
+          <div className="animate-pulse text-sm text-slate-400">
+            Checking permissions...
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
-  return hasPermission ? children : <Navigate to="/dashboard" replace />;
+  return hasPermission ? (
+    <>
+      <PageTitle title={title} />
+      {children}
+    </>
+  ) : (
+    <Navigate to="/dashboard" replace />
+  );
 };
 
 export default function App() {
@@ -103,19 +125,38 @@ export default function App() {
 
   if (checking) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-900 text-slate-100">
-        <div className="animate-pulse text-sm text-slate-400">
-          Checking admin session...
+      <>
+        <PageTitle title="Loading..." />
+        <div className="min-h-screen flex items-center justify-center bg-slate-900 text-slate-100">
+          <div className="animate-pulse text-sm text-slate-400">
+            Checking admin session...
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   return (
     <Routes>
       {/* Public Routes */}
-      <Route path="/login" element={<Login setAuthed={setAuthed} />} />
-      <Route path="/mfa/:mode/:id" element={<MFA setAuthed={setAuthed} />} />
+      <Route
+        path="/login"
+        element={
+          <>
+            <PageTitle title="Login" />
+            <Login setAuthed={setAuthed} />
+          </>
+        }
+      />
+      <Route
+        path="/mfa/:mode/:id"
+        element={
+          <>
+            <PageTitle title="Two-Factor Authentication" />
+            <MFA setAuthed={setAuthed} />
+          </>
+        }
+      />
 
       {/* Global Route */}
       <Route
@@ -136,42 +177,102 @@ export default function App() {
           )
         }
       >
-        <Route index element={<MembersList />} />
+        <Route
+          index
+          element={
+            <>
+              <PageTitle title="Members" />
+              <MembersList />
+            </>
+          }
+        />
 
         {/* Protected Add Member Route */}
         <Route
           path="add-member"
           element={
-            <ProtectedRoute requireCurrentBatch={true}>
+            <ProtectedRoute requireCurrentBatch={true} title="Add Member">
               <AddMember />
             </ProtectedRoute>
           }
         />
 
-        <Route path="edit/:id" element={<EditMember />} />
-        <Route path="roles" element={<Roles />} />
-        <Route path="courses" element={<Courses />} />
-        <Route path="admins" element={<AdminList />} />
-        <Route path="admins/add" element={<AddAdmin />} />
+        <Route
+          path="edit/:id"
+          element={
+            <>
+              <PageTitle title="Edit Member" />
+              <EditMember />
+            </>
+          }
+        />
+
+        <Route
+          path="roles"
+          element={
+            <>
+              <PageTitle title="Roles" />
+              <Roles />
+            </>
+          }
+        />
+
+        <Route
+          path="courses"
+          element={
+            <>
+              <PageTitle title="Courses" />
+              <Courses />
+            </>
+          }
+        />
+
+        <Route
+          path="admins"
+          element={
+            <>
+              <PageTitle title="Admin" />
+              <AdminList />
+            </>
+          }
+        />
+
+        <Route
+          path="admins/add"
+          element={
+            <>
+              <PageTitle title="Add Admin" />
+              <AddAdmin />
+            </>
+          }
+        />
 
         {/* Protected Edit Admin Route */}
         <Route
           path="admins/edit/:id"
           element={
-            <ProtectedRoute requireCurrentBatch={true}>
+            <ProtectedRoute requireCurrentBatch={true} title="Edit Admin">
               <EditAdmin />
             </ProtectedRoute>
           }
         />
 
         {/* Event Routes */}
-        <Route path="events" element={<EventsList />} />
+        <Route
+          path="events"
+          element={
+            <>
+              <PageTitle title="Events" />
+              <EventsList />
+            </>
+          }
+        />
 
         {/* Protected Add Event Route */}
         <Route
           path="events/add"
           element={
-            <ProtectedRoute requireCurrentBatch={true}>
+            <ProtectedRoute requireCurrentBatch={true} title="Add Event">
               <AddEvent />
             </ProtectedRoute>
           }
@@ -181,7 +282,7 @@ export default function App() {
         <Route
           path="events/edit/:id"
           element={
-            <ProtectedRoute requireCurrentBatch={true}>
+            <ProtectedRoute requireCurrentBatch={true} title="Edit Event">
               <EditEvent />
             </ProtectedRoute>
           }

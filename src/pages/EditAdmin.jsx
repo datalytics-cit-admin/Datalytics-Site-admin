@@ -244,6 +244,13 @@ export default function EditAdmin() {
     setSaving(true);
     setMsg("");
 
+    // Check if image is selected or exists
+    if (!file && !form.image) {
+      setMsg("Profile photo is required");
+      setSaving(false);
+      return;
+    }
+
     // Validate phone number
     const digits = form.phone.replace(/\D/g, "");
     if (digits.length !== 10) {
@@ -543,7 +550,7 @@ export default function EditAdmin() {
                           value=""
                           className="bg-slate-800 text-slate-300"
                         >
-                          Select
+                          Select Year
                         </option>
                         {years.map((y) => (
                           <option
@@ -656,6 +663,12 @@ export default function EditAdmin() {
                         disabled={myRole !== "superadmin"}
                         required
                       >
+                        <option
+                          value=""
+                          className="bg-slate-800 text-slate-300"
+                        >
+                          Select Batch
+                        </option>
                         {batchOptions.map((b) => (
                           <option
                             key={b}
@@ -688,7 +701,7 @@ export default function EditAdmin() {
                           value=""
                           className="bg-slate-800 text-slate-300"
                         >
-                          Select
+                          Select Gender
                         </option>
                         {genderOptions.map((g) => (
                           <option
@@ -705,6 +718,37 @@ export default function EditAdmin() {
                         ))}
                       </select>
                     </div>
+                  </div>
+
+                  {/* Position Field */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-300">
+                      Position <span className="text-red-400">*</span>
+                    </label>
+                    <select
+                      className={`w-full bg-slate-900/50 border rounded-xl px-3 sm:px-4 py-2 sm:py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all duration-200 text-sm sm:text-base ${getFieldBorderClass(
+                        form.position,
+                        original.position
+                      )}`}
+                      value={form.position}
+                      onChange={(e) =>
+                        handleInputChange("position", e.target.value)
+                      }
+                      required
+                    >
+                      <option value="" className="bg-slate-800 text-slate-300">
+                        Select Position
+                      </option>
+                      {positions.map((r) => (
+                        <option
+                          key={r._id}
+                          value={r._id}
+                          className="bg-slate-800 text-white"
+                        >
+                          {r.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   {/* Password Field - Compact Icon-based */}
@@ -822,42 +866,17 @@ export default function EditAdmin() {
                       </div>
                     )}
                   </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-300">
-                      Position <span className="text-red-400">*</span>
-                    </label>
-                    <select
-                      className={`w-full bg-slate-900/50 border rounded-xl px-3 sm:px-4 py-2 sm:py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all duration-200 text-sm sm:text-base ${getFieldBorderClass(
-                        form.position,
-                        original.position
-                      )}`}
-                      value={form.position}
-                      onChange={(e) =>
-                        handleInputChange("position", e.target.value)
-                      }
-                      required
-                    >
-                      <option value="" className="bg-slate-800 text-slate-300">
-                        Select Position
-                      </option>
-                      {positions.map((r) => (
-                        <option
-                          key={r._id}
-                          value={r._id}
-                          className="bg-slate-800 text-white"
-                        >
-                          {r.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
                 </div>
               </div>
 
-              {/* Profile Image */}
-              <div
-                className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all
+              {/* Profile Image with Label and Required */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
+                  <User className="w-4 h-4 shrink-0" />
+                  Profile Photo <span className="text-red-400">*</span>
+                </label>
+                <div
+                  className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all
       ${
         isDragging
           ? "border-indigo-400 bg-slate-900/40"
@@ -865,55 +884,60 @@ export default function EditAdmin() {
           ? "border-yellow-400 ring-2 ring-yellow-400/20"
           : "border-slate-600 hover:border-indigo-500 hover:bg-slate-900/30"
       }`}
-                onClick={() =>
-                  document.getElementById("adminImageInput").click()
-                }
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setIsDragging(true);
-                }}
-                onDragLeave={(e) => {
-                  e.preventDefault();
-                  setIsDragging(false);
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setIsDragging(false);
-                  const droppedFile = e.dataTransfer.files[0];
-                  handleFile(droppedFile);
-                }}
-              >
-                {preview || form.image ? (
-                  <div className="relative">
-                    <img
-                      src={preview || form.image}
-                      className="mx-auto h-40 w-40 object-cover rounded-xl"
-                    />
-                    <button
-                      type="button"
-                      className="absolute -top-2 -right-2 bg-red-500 px-1 rounded-full"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeImage();
-                      }}
-                    >
-                      <X className="w-4 h-4 text-white" />
-                    </button>
-                  </div>
-                ) : (
-                  <div className="text-slate-400 text-sm">
-                    Drag & drop image here or click to upload
-                    <br />
-                    <span className="text-xs">Max 5MB • PNG, JPG, JPEG</span>
-                  </div>
-                )}
-                <input
-                  id="adminImageInput"
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => handleFile(e.target.files[0])}
-                />
+                  onClick={() =>
+                    document.getElementById("adminImageInput").click()
+                  }
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    setIsDragging(false);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDragging(false);
+                    const droppedFile = e.dataTransfer.files[0];
+                    handleFile(droppedFile);
+                  }}
+                >
+                  {preview || form.image ? (
+                    <div className="relative">
+                      <img
+                        src={preview || form.image}
+                        alt="Profile preview"
+                        className="mx-auto h-40 w-40 object-cover rounded-xl"
+                      />
+                      <button
+                        type="button"
+                        className="absolute -top-2 -right-2 bg-red-500 px-1 rounded-full"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeImage();
+                        }}
+                      >
+                        <X className="w-4 h-4 text-white" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="text-slate-400 text-sm">
+                      Drag & drop image here or click to upload
+                      <br />
+                      <span className="text-xs">
+                        Max 5MB • PNG, JPG, JPEG •
+                      </span>
+                    </div>
+                  )}
+                  <input
+                    id="adminImageInput"
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => handleFile(e.target.files[0])}
+                    // Removed: required={!form.image}
+                  />
+                </div>
               </div>
             </div>
           </div>

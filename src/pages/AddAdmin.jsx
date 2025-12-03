@@ -338,12 +338,19 @@ export default function AddAdmin() {
         <form onSubmit={submit} className="grid grid-cols-1 gap-6 lg:gap-10">
           {/* DETAILS GRID */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Input label="Full Name" required value={name} setter={setName} />
+            <Input
+              label="Full Name"
+              required
+              value={name}
+              setter={setName}
+              placeholder="Enter full name"
+            />
             <Input
               label="Roll Number"
               required
               value={rollNo}
               setter={setRollNo}
+              placeholder="Enter roll number"
             />
 
             <Input
@@ -353,6 +360,7 @@ export default function AddAdmin() {
               value={email}
               setter={setEmail}
               type="email"
+              placeholder="example@gmail.com.edu"
             />
             {/* Password Field - Icon-based compact */}
             <div className="space-y-2">
@@ -524,65 +532,75 @@ export default function AddAdmin() {
               value={linkedin}
               required
               setter={setLinkedin}
+              placeholder="https://linkedin.com/in/username"
             />
             {/* IMAGE UPLOAD */}
-            <div
-              className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all
-    ${
-      isDragging
-        ? "border-indigo-500 bg-slate-900/40"
-        : "border-slate-600 hover:border-indigo-500 hover:bg-slate-900/30"
-    }`}
-              onClick={() => fileInputRef.current.click()}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setIsDragging(true);
-              }}
-              onDragLeave={(e) => {
-                e.preventDefault();
-                setIsDragging(false);
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                setIsDragging(false);
-                handleFile(e.dataTransfer.files[0]);
-              }}
-            >
-              {preview ? (
-                <div className="relative flex justify-center">
-                  <img
-                    src={preview}
-                    className="h-32 w-32 object-cover rounded-xl shadow-md"
-                  />
-                  <button
-                    type="button"
-                    className="absolute -top-2 -right-2 bg-red-500 p-1 rounded-full"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      removeImage();
-                    }}
-                  >
-                    <X className="w-4 h-4 text-white" />
-                  </button>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center gap-2">
-                  <Image className="w-10 h-10 text-slate-400" />
-                  <p className="text-sm text-slate-400">
-                    Drag & Drop or Click to Upload
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    Max 5MB • JPG PNG JPEG
-                  </p>
-                </div>
-              )}
-              <input
-                type="file"
-                ref={fileInputRef}
-                className="hidden"
-                accept="image/*"
-                onChange={(e) => handleFile(e.target.files[0])}
-              />
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-300 flex items-center gap-2">
+                <Image className="w-4 h-4" />
+                Profile Photo <span className="text-red-400">*</span>
+              </label>
+              <div
+                className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all
+      ${
+        isDragging
+          ? "border-indigo-500 bg-slate-900/40"
+          : file
+          ? "border-slate-700"
+          : "border-slate-600 hover:border-indigo-500 hover:bg-slate-900/30"
+      }`}
+                onClick={() => fileInputRef.current.click()}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDragging(true);
+                }}
+                onDragLeave={(e) => {
+                  e.preventDefault();
+                  setIsDragging(false);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDragging(false);
+                  handleFile(e.dataTransfer.files[0]);
+                }}
+              >
+                {preview ? (
+                  <div className="relative flex justify-center">
+                    <img
+                      src={preview}
+                      alt="Profile preview"
+                      className="h-32 w-32 object-cover rounded-xl shadow-md"
+                    />
+                    <button
+                      type="button"
+                      className="absolute -top-2 -right-2 bg-red-500 p-1 rounded-full"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeImage();
+                      }}
+                    >
+                      <X className="w-4 h-4 text-white" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-2">
+                    <Image className="w-10 h-10 text-slate-400" />
+                    <p className="text-sm text-slate-400">
+                      Drag & Drop or Click to Upload
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      Max 5MB • JPG PNG JPEG •
+                    </p>
+                  </div>
+                )}
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  className="hidden"
+                  accept="image/*"
+                  onChange={(e) => handleFile(e.target.files[0])}
+                />
+              </div>
             </div>
           </div>
 
@@ -601,17 +619,18 @@ export default function AddAdmin() {
 }
 
 /* COMPONENTS */
-const Input = ({ label, required, value, setter, type = "text", icon }) => (
+const Input = ({ label, required, value, setter, type = "text", icon, placeholder }) => (
   <div className="space-y-2">
     <label className="text-sm font-medium text-slate-300 flex gap-1 items-center">
       {icon} {label} {required && <span className="text-red-400">*</span>}
     </label>
     <input
       type={type}
-      className="w-full bg-slate-900/50 border border-slate-700 rounded-xl px-4 py-3 text-white"
+      className="w-full bg-slate-900/50 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500"
       value={value}
       onChange={(e) => setter(e.target.value)}
       required={required}
+      placeholder={placeholder}
     />
   </div>
 );
