@@ -57,7 +57,7 @@ export default function Login({ setAuthed }) {
             />
           </div>
           <h1 className="text-3xl font-bold bg-linear-to-r from-white to-slate-300 bg-clip-text text-transparent">
-            Admin Portal
+            Datalytics Admin Portal
           </h1>
         </div>
 
