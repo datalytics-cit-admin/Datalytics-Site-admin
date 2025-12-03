@@ -226,11 +226,13 @@ export default function MFA({ setAuthed }) {
               </button>
             </form>
 
-            {/* Status Message */}
             {msg && (
               <div
                 className={`mt-4 p-3 rounded-xl text-center text-sm ${
-                  msg.includes("X")
+                  msg.toLowerCase().includes("invalid") ||
+                  msg.toLowerCase().includes("failed") ||
+                  msg.toLowerCase().includes("error") ||
+                  msg.toLowerCase().includes("expired")
                     ? "bg-red-500/10 border border-red-500/20 text-red-400"
                     : "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"
                 }`}
