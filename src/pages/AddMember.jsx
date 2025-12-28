@@ -224,9 +224,11 @@ export default function AddMember() {
     fd.append("gender", gender);
     fd.append("dob", dob);
     fd.append("linkedin", linkedin);
-    fd.append("portfolio", portfolio);
-    fd.append("github", github);
-    fd.append("instagram", instagram);
+    
+    if (portfolio.trim()) fd.append("portfolio", portfolio);
+    if (github.trim()) fd.append("github", github);
+    if (instagram.trim()) fd.append("instagram", instagram);
+
     fd.append("batch", batch);
     fd.append("phone", formattedPhone);
 
