@@ -103,7 +103,8 @@ export default function DashboardLayout({ setAuthed }) {
 
   const isMemberActive = () =>
     location.pathname === "/dashboard" ||
-    location.pathname === "/dashboard/add-member";
+    location.pathname === "/dashboard/add-member" ||
+    location.pathname.startsWith("/dashboard/edit/");
 
   const isEventActive = () => location.pathname.includes("/dashboard/events");
 
@@ -112,6 +113,52 @@ export default function DashboardLayout({ setAuthed }) {
     e.preventDefault();
     alert(message);
   };
+
+  // Toggle handlers ensuring only one drawer is open at a time and navigates to the first page if collapsed
+  const toggleMembers = () => {
+    if (!membersOpen) {
+      navigate("/dashboard");
+    } else {
+      setMembersOpen(false);
+    }
+  };
+
+  const toggleEvents = () => {
+    if (!eventsOpen) {
+      navigate("/dashboard/events");
+    } else {
+      setEventsOpen(false);
+    }
+  };
+
+  const toggleManagement = () => {
+    if (!managementOpen) {
+      navigate("/dashboard/roles");
+    } else {
+      setManagementOpen(false);
+    }
+  };
+
+  // Open drawer based on current page automatically, and close others
+  useEffect(() => {
+    if (isMemberActive()) {
+      setMembersOpen(true);
+      setEventsOpen(false);
+      setManagementOpen(false);
+    } else if (isEventActive()) {
+      setMembersOpen(false);
+      setEventsOpen(true);
+      setManagementOpen(false);
+    } else if (isManagementActive()) {
+      setMembersOpen(false);
+      setEventsOpen(false);
+      setManagementOpen(true);
+    } else {
+      setMembersOpen(false);
+      setEventsOpen(false);
+      setManagementOpen(false);
+    }
+  }, [location.pathname]);
 
   return (
     <div className="min-h-screen bg-linear-to-br from-slate-900 via-slate-950 to-black text-slate-100 flex">
@@ -144,7 +191,7 @@ export default function DashboardLayout({ setAuthed }) {
           {/* Members Dropdown */}
           <div className="pt-2">
             <button
-              onClick={() => setMembersOpen(!membersOpen)}
+              onClick={toggleMembers}
               className={`w-full flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3 rounded-xl transition-all duration-200 group ${
                 isMemberActive()
                   ? "bg-slate-800/60 text-white"
@@ -215,7 +262,7 @@ export default function DashboardLayout({ setAuthed }) {
           {/* Events Dropdown */}
           <div className="pt-2">
             <button
-              onClick={() => setEventsOpen(!eventsOpen)}
+              onClick={toggleEvents}
               className={`w-full flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3 rounded-xl transition-all duration-200 group ${
                 isEventActive()
                   ? "bg-slate-800/60 text-white"
@@ -284,7 +331,7 @@ export default function DashboardLayout({ setAuthed }) {
           {/* Management Dropdown */}
           <div className="pt-4">
             <button
-              onClick={() => setManagementOpen(!managementOpen)}
+              onClick={toggleManagement}
               className={`w-full flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3 rounded-xl transition-all duration-200 group ${
                 isManagementActive()
                   ? "bg-slate-800/60 text-white"

@@ -34,17 +34,15 @@ export default function MembersList() {
 
   // Generate batch options and get current batch
   const getCurrentBatch = () => {
-    const currentYear = new Date().getFullYear();
-    const currentMonth = new Date().getMonth(); // 0-11 (Jan-Dec)
+    const now = new Date();
+    const currentMonth = now.getMonth(); // 0-11 (Jan=0, Jun=5)
+    const currentYear = now.getFullYear();
 
-    // If it's after June, consider it the next academic year
-    if (currentMonth >= 6) {
-      // July to December
-      return `${currentYear}-${currentYear + 1}`;
-    } else {
-      // January to June
-      return `${currentYear - 1}-${currentYear}`;
-    }
+    // Academic year starts in June (month 5)
+    const academicYearStart = currentMonth >= 5 ? currentYear : currentYear - 1;
+    const academicYearEnd = academicYearStart + 1;
+
+    return `${academicYearStart}-${academicYearEnd}`;
   };
 
   const [allAdmins, setAllAdmins] = useState([]);
@@ -124,11 +122,7 @@ export default function MembersList() {
       const data = membersRes.data;
       setMembers(data);
 
-      const latestBatch = [...new Set(data.map((m) => m.batch))].sort(
-        (a, b) => parseInt(b.split("-")[0]) - parseInt(a.split("-")[0])
-      )[0];
-
-      if (latestBatch) setBatchFilter(latestBatch);
+      setBatchFilter(getCurrentBatch());
     } catch (err) {
       console.error(err);
     } finally {
