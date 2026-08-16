@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import API from "../services/api";
+import { getSession, clearSession } from "../services/session";
 import {
   ArrowLeft,
   User,
@@ -128,8 +129,8 @@ export default function EditAdmin() {
     const loadData = async () => {
       try {
         // Get current admin role
-        const me = await API.get("/admin/me");
-        setMyRole(me.data.admin.role);
+        const me = await getSession();
+        setMyRole(me.role);
 
         // Fetch courses - reverse the array and filter out "Computing Department"
         const coursesRes = await API.get("/courses");
@@ -294,6 +295,10 @@ export default function EditAdmin() {
       }
 
       await API.put(`/admin/edit/${id}`, fd);
+
+      // The edited admin may be the signed-in one, so drop the cached session
+      // rather than serve their old role/batch for the rest of the TTL.
+      clearSession();
 
       setMsg("Admin Updated");
       setTimeout(() => navigate("/dashboard/admins"), 1000);

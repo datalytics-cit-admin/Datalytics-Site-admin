@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import API from "../services/api";
+import { clearSession } from "../services/session";
 import { auth, getIdToken } from "../services/firebase";
 import { Shield, QrCode, Smartphone, ArrowLeft } from "lucide-react";
 
@@ -17,6 +18,11 @@ export default function MFA({ setAuthed }) {
   const isSetupMode = mode === "setup";
   const isFromCreate = location.state?.fromCreate || false;
 
+  // In setup mode the code box stays locked until a QR exists: there is no
+  // secret to check a code against before that, so an enabled box could only
+  // ever produce a confusing "Invalid OTP".
+  const codeUnlocked = !isSetupMode || Boolean(qr);
+
   // Two distinct flows:
   //  - login (setup or verify): the signed-in Firebase user completing their own
   //    second factor. Identity comes from the ID token; no admin id is sent.
@@ -30,6 +36,7 @@ export default function MFA({ setAuthed }) {
 
   // SETUP MFA (QR Generation)
   const handleSetup = async () => {
+    if (loading) return;
     setLoading(true);
     setMsg("");
     try {
@@ -50,6 +57,7 @@ export default function MFA({ setAuthed }) {
 
   const handleVerify = async (e) => {
     e.preventDefault();
+    if (loading || !codeUnlocked) return;
     setLoading(true);
     setMsg("");
 
@@ -64,6 +72,7 @@ export default function MFA({ setAuthed }) {
       // this sign-in; the ID token must be force-refreshed to carry it.
       await API.post("/admin/verify-mfa", { code });
       await getIdToken(true);
+      clearSession();
 
       setAuthed(true);
       return navigate("/dashboard", { replace: true });
@@ -196,16 +205,21 @@ export default function MFA({ setAuthed }) {
                   <div className="space-y-3">
                     <input
                       type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
                       maxLength={8}
                       value={code}
+                      disabled={!codeUnlocked || loading}
                       onChange={(e) =>
                         setCode(e.target.value.replace(/[^0-9]/g, ""))
                       }
                       placeholder="00000000"
-                      className="w-full text-center text-2xl font-mono bg-slate-800/50 border border-slate-700 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all duration-200"
+                      className="w-full text-center text-2xl font-mono bg-slate-800/50 border border-slate-700 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
                     />
                     <p className="text-xs text-slate-400 text-center">
-                      Code from your authenticator app
+                      {codeUnlocked
+                        ? "Code from your authenticator app"
+                        : "Locked until you generate the QR code"}
                     </p>
                   </div>
                 </div>
@@ -213,7 +227,7 @@ export default function MFA({ setAuthed }) {
 
               <button
                 type="submit"
-                disabled={loading || code.length !== 8}
+                disabled={loading || !codeUnlocked || code.length !== 8}
                 className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-400 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-200 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {loading ? (

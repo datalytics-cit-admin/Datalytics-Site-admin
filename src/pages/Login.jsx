@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import API from "../services/api";
+import { clearSession } from "../services/session";
 import { auth } from "../services/firebase";
 
 export default function Login({ setAuthed }) {
@@ -22,6 +23,7 @@ export default function Login({ setAuthed }) {
       // Firebase verifies the password and issues an ID token. That token alone
       // is NOT a session — the server still requires the second factor.
       await signInWithEmailAndPassword(auth, email.trim(), password);
+      clearSession();
 
       const { data } = await API.get("/admin/mfa/state");
 

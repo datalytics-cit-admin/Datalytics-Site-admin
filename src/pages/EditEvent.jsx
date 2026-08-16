@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import API from "../services/api";
+import { getSession } from "../services/session";
 import {
   ArrowLeft,
   Calendar,
@@ -83,8 +84,7 @@ export default function EditEvent() {
     const loadData = async () => {
       try {
         // Get current admin
-        const meRes = await API.get("/admin/me");
-        setMe(meRes.data.admin);
+        setMe(await getSession());
 
         // Get event data
         const eventRes = await API.get(`/events/${id}`);

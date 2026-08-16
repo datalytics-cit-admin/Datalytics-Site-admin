@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import API from "../services/api";
+import { getSession } from "../services/session";
 import { BookOpen, Plus, Trash2, GraduationCap, Search } from "lucide-react";
 
 export default function Courses() {
@@ -15,10 +16,10 @@ export default function Courses() {
 
   // Fetch current admin and batch
   useEffect(() => {
-    API.get("/admin/me")
-      .then((res) => {
-        setCurrentAdmin(res.data.admin);
-        setCurrentBatch(res.data.admin.batch);
+    getSession()
+      .then((admin) => {
+        setCurrentAdmin(admin);
+        setCurrentBatch(admin.batch);
       })
       .catch(console.error);
   }, []);
@@ -48,8 +49,8 @@ export default function Courses() {
 
   // Fetch current admin
   useEffect(() => {
-    API.get("/admin/me")
-      .then((res) => setCurrentAdmin(res.data.admin))
+    getSession()
+      .then(setCurrentAdmin)
       .catch(console.error);
   }, []);
 

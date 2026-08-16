@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import API from "../services/api";
+import { clearSession, useSession } from "../services/session";
 
 export default function DashboardLayout({ setAuthed }) {
   const location = useLocation();
@@ -25,7 +26,8 @@ export default function DashboardLayout({ setAuthed }) {
   const [managementOpen, setManagementOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const [eventsOpen, setEventsOpen] = useState(false);
-  const [me, setMe] = useState(null);
+  // Shared with App, ProtectedRoute and the page being rendered — one request.
+  const { admin: me } = useSession();
 
   // Function to get current batch based on academic year (June to June)
   const getCurrentBatch = () => {
@@ -66,12 +68,6 @@ export default function DashboardLayout({ setAuthed }) {
   }, []);
 
   useEffect(() => {
-    API.get("/admin/me")
-      .then((res) => setMe(res.data.admin))
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
      if (open) {
        document.body.style.overflow = "hidden";
      } else {
@@ -91,6 +87,7 @@ export default function DashboardLayout({ setAuthed }) {
     } catch (_) {
     } finally {
       await signOut(auth).catch(() => {});
+      clearSession();
       setAuthed(false);
       navigate("/login");
     }

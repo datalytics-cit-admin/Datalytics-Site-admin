@@ -2,6 +2,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import API from "../services/api";
+import { getSession } from "../services/session";
 import {
   Users,
   Search,
@@ -71,10 +72,10 @@ export default function AdminList() {
 
   const fetchMyDetails = async () => {
     try {
-      const res = await API.get("/admin/me");
-      setMyRole(res.data.admin.role);
-      setMyBatch(res.data.admin.batch);
-      setMyId(res.data.admin._id); // Store current user's ID
+      const admin = await getSession();
+      setMyRole(admin.role);
+      setMyBatch(admin.batch);
+      setMyId(admin._id); // Store current user's ID
     } catch (err) {
       console.error("Failed to fetch user details:", err);
     }

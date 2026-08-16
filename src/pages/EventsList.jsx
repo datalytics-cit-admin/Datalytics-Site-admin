@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import API from "../services/api";
+import { getSession } from "../services/session";
 import { Calendar, Search, Filter, ChevronDown } from "lucide-react";
 import EventCard from "../components/EventCard";
 import { useEventStatuses, getStatusLabel } from "../utils/eventStatus";
@@ -69,14 +70,15 @@ export default function EventsList() {
 
   const fetchEvents = async () => {
     try {
-      // Get current admin info first
-      const adminRes = await API.get("/admin/me");
-      setCurrentAdmin(adminRes.data.admin);
+      // Both at once: the session is usually already cached, and the events
+      // request should not wait on it either way.
+      const [admin, eventsRes] = await Promise.all([
+        getSession(),
+        API.get("/events"),
+      ]);
 
-      // Then fetch events
-      const eventsRes = await API.get("/events");
-      const data = eventsRes.data.events;
-      setEvents(data);
+      setCurrentAdmin(admin);
+      setEvents(eventsRes.data.events);
 
       setBatchFilter(getCurrentBatch());
     } catch (err) {

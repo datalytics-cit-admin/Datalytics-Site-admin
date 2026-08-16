@@ -1,6 +1,7 @@
 // admin/src/pages/Roles.jsx
 import { useEffect, useState, useMemo } from "react";
 import API from "../services/api";
+import { getSession } from "../services/session";
 import { BadgeCheck, Plus, Trash2, Users, Tag, Filter } from "lucide-react";
 
 export default function Roles() {
@@ -14,8 +15,8 @@ export default function Roles() {
 
   // Fetch current admin
   useEffect(() => {
-    API.get("/admin/me")
-      .then((res) => setCurrentAdmin(res.data.admin))
+    getSession()
+      .then(setCurrentAdmin)
       .catch(console.error);
   }, []);
 

@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import API from "../services/api";
+import { getSession } from "../services/session";
 import {
   ArrowLeft,
   Upload,
@@ -53,8 +54,8 @@ export default function EditMember() {
   const [adminRole, setAdminRole] = useState("");
 
   useEffect(() => {
-    API.get("/admin/me")
-      .then((res) => setAdminRole(res.data.admin.role))
+    getSession()
+      .then((admin) => setAdminRole(admin.role))
       .catch(() => setAdminRole(""));
   }, []);
 

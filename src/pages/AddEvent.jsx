@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import API from "../services/api";
+import { getSession } from "../services/session";
 import {
   ArrowLeft,
   Calendar,
@@ -75,8 +76,8 @@ export default function AddEvent() {
 
   // Fetch logged-in admin
   useEffect(() => {
-    API.get("/admin/me")
-      .then((res) => setMe(res.data.admin))
+    getSession()
+      .then(setMe)
       .catch(() => {});
   }, []);
 

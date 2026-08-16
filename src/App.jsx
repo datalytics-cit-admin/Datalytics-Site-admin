@@ -1,22 +1,32 @@
 // admin/src/App.jsx
 import { Routes, Route, Navigate } from "react-router-dom";
-import { useEffect, useState } from "react";
-import API from "./services/api";
-import Login from "./pages/Login";
-import AddMember from "./pages/AddMember";
-import MembersList from "./pages/MembersList";
-import EditMember from "./pages/EditMember";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { getSession, clearSession } from "./services/session";
 import DashboardLayout from "./components/DashboardLayout";
-import Roles from "./pages/Roles";
-import Courses from "./pages/Courses";
-import AdminList from "./pages/AdminList";
-import AddAdmin from "./pages/AddAdmin";
-import EditAdmin from "./pages/EditAdmin";
-import MFA from "./pages/MFA";
 
-import EventsList from "./pages/EventsList";
-import AddEvent from "./pages/AddEvent";
-import EditEvent from "./pages/EditEvent";
+// Every page used to be in the first bundle, so opening the login screen also
+// downloaded the member editor, the event forms and the admin CRUD. Split per
+// route: the browser fetches a page's code when that route is first visited,
+// and Vite preloads the chunk for the route already being rendered.
+const Login = lazy(() => import("./pages/Login"));
+const MFA = lazy(() => import("./pages/MFA"));
+const MembersList = lazy(() => import("./pages/MembersList"));
+const AddMember = lazy(() => import("./pages/AddMember"));
+const EditMember = lazy(() => import("./pages/EditMember"));
+const AdminList = lazy(() => import("./pages/AdminList"));
+const AddAdmin = lazy(() => import("./pages/AddAdmin"));
+const EditAdmin = lazy(() => import("./pages/EditAdmin"));
+const EventsList = lazy(() => import("./pages/EventsList"));
+const AddEvent = lazy(() => import("./pages/AddEvent"));
+const EditEvent = lazy(() => import("./pages/EditEvent"));
+const Roles = lazy(() => import("./pages/Roles"));
+const Courses = lazy(() => import("./pages/Courses"));
+
+const RouteFallback = () => (
+  <div className="min-h-[50vh] flex items-center justify-center">
+    <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+  </div>
+);
 
 // Title component to set document title
 const PageTitle = ({ title }) => {
@@ -39,8 +49,9 @@ const ProtectedRoute = ({ children, requireCurrentBatch = false, title }) => {
   useEffect(() => {
     const checkPermission = async () => {
       try {
-        const response = await API.get("/admin/me");
-        const admin = response.data.admin;
+        // Shared with the app-level auth check and with the page being
+        // rendered — one request per load, not one per component.
+        const admin = await getSession();
 
         // Get current batch
         const now = new Date();
@@ -64,7 +75,7 @@ const ProtectedRoute = ({ children, requireCurrentBatch = false, title }) => {
             setShowAlert(true);
           }
         }
-      } catch (error) {
+      } catch {
         setHasPermission(false);
       } finally {
         setChecking(false);
@@ -112,9 +123,10 @@ export default function App() {
   useEffect(() => {
     const verify = async () => {
       try {
-        await API.get("/admin/me");
+        await getSession();
         setAuthed(true);
       } catch {
+        clearSession();
         setAuthed(false);
       } finally {
         setChecking(false);
@@ -137,6 +149,7 @@ export default function App() {
   }
 
   return (
+    <Suspense fallback={<RouteFallback />}>
     <Routes>
       {/* Public Routes */}
       <Route
@@ -289,5 +302,6 @@ export default function App() {
         />
       </Route>
     </Routes>
+    </Suspense>
   );
 }

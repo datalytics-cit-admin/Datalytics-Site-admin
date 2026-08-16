@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import API from "../services/api";
+import { getSession } from "../services/session";
 import {
   ArrowLeft,
   UserPlus,
-  Upload,
   X,
   Mail,
   Phone,
@@ -13,6 +13,8 @@ import {
   EyeOff,
   Key,
 } from "lucide-react";
+import MfaEnrollModal from "../components/MfaEnrollModal";
+import { useNavigationGuard } from "../hooks/useNavigationGuard";
 
 export default function AddAdmin() {
   const navigate = useNavigate();
@@ -32,15 +34,31 @@ export default function AddAdmin() {
 
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState("");
-  const [fileInfo, setFileInfo] = useState({ name: "", size: "" });
 
   const [courses, setCourses] = useState([]);
   const [positions, setPositions] = useState([]);
   const [me, setMe] = useState(null);
 
   const [msg, setMsg] = useState("");
+  const [msgTone, setMsgTone] = useState("error"); // "error" | "success" | "info"
   const [loading, setLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+
+  // Creation is a three-step handshake and only the last step writes anything:
+  //   form → validate the details → enrol MFA → create
+  // Until the code verifies there is no admin record, no sign-in account and no
+  // uploaded image, so abandoning the flow needs no cleanup.
+  const [phase, setPhase] = useState("form"); // "form" | "mfa"
+  const [qr, setQr] = useState("");
+  const [draftToken, setDraftToken] = useState("");
+  const [mfaStatus, setMfaStatus] = useState("idle"); // idle|generating|ready|submitting
+  const [mfaMsg, setMfaMsg] = useState("");
+  const [confirmingAbort, setConfirmingAbort] = useState(false);
+
+  // Belt and braces against duplicate submissions: `loading` disables the
+  // button, this blocks a second call that slips through before React repaints
+  // (double Enter, a fast double click, a stray re-fire).
+  const inFlightRef = useRef(false);
 
   const [showPassword, setShowPassword] = useState(false);
   const [passwordTouched, setPasswordTouched] = useState(false);
@@ -107,7 +125,7 @@ export default function AddAdmin() {
 
   // Fetch logged-in admin
   useEffect(() => {
-    API.get("/admin/me").then((res) => setMe(res.data.admin));
+    getSession().then(setMe).catch(() => {});
   }, []);
 
   // // auto batch - set current batch as default
@@ -142,71 +160,200 @@ export default function AddAdmin() {
 
     setFile(fileData);
     setPreview(URL.createObjectURL(fileData));
-    setFileInfo({
-      name: fileData.name,
-      size: (fileData.size / 1024 / 1024).toFixed(2) + "MB",
-    });
     setMsg("");
   };
 
   const removeImage = () => {
     setFile(null);
     setPreview("");
-    setFileInfo({ name: "", size: "" });
   };
 
-  // Submit
+  const formattedPhone = () => {
+    const digits = phone.replace(/\D/g, "");
+    return `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
+  };
+
+  // The identity fields the server validates and binds the MFA draft to. The
+  // password and the image are deliberately absent: they are sent once, with
+  // the final create request, and never before.
+  const detailsPayload = () => ({
+    name,
+    rollNo,
+    email,
+    course,
+    gender,
+    year,
+    batch,
+    position,
+    linkedin,
+    phone: formattedPhone(),
+  });
+
+  // The form is frozen while its details are being checked and for the whole
+  // MFA step — the draft is bound to exactly these values.
+  const formLocked = loading || phase === "mfa";
+
+  const showError = (text) => {
+    setMsgTone("error");
+    setMsg(text);
+  };
+
+  // STEP 1 — check the details. Writes nothing; this only decides whether it is
+  // worth asking the creator to scan anything.
   const submit = async (e) => {
     e.preventDefault();
 
-    if (!file) return setMsg("Select profile image");
+    if (inFlightRef.current || phase !== "form") return;
+
+    if (!file) return showError("Select profile image");
 
     const digits = phone.replace(/\D/g, "");
-    if (digits.length !== 10) return setMsg("Invalid phone number");
+    if (digits.length !== 10) return showError("Invalid phone number");
 
-    // Validate password
     const passwordValidation = validatePassword(password);
     if (!passwordValidation.valid) {
-      setMsg(passwordValidation.message);
-      return;
+      return showError(passwordValidation.message);
     }
 
-    const formattedPhone = `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
-
-    const fd = new FormData();
-    fd.append("image", file);
-    fd.append("name", name);
-    fd.append("rollNo", rollNo);
-    fd.append("email", email);
-    fd.append("password", password);
-    fd.append("course", course);
-    fd.append("gender", gender);
-    fd.append("year", year);
-    fd.append("batch", batch);
-    fd.append("position", position);
-    fd.append("linkedin", linkedin);
-    fd.append("phone", formattedPhone);
-    fd.append("role", me?.role === "superadmin" ? "admin" : "admin");
-
+    inFlightRef.current = true;
     setLoading(true);
+    setMsg("");
 
     try {
-      const res = await API.post("/admin/add", fd, {
-        onUploadProgress: (p) =>
-          setUploadProgress(Math.round((p.loaded / p.total) * 100)),
-      });
+      await API.post("/admin/add/validate", detailsPayload());
 
-      setMsg("Admin Created");
-
-      // Redirect to MFA Setup page for the newly created admin
-      navigate(`/mfa/setup/${res.data.admin._id}`, {
-        state: { fromCreate: true },
-      });
+      setQr("");
+      setDraftToken("");
+      setMfaMsg("");
+      setMfaStatus("idle");
+      setConfirmingAbort(false);
+      setPhase("mfa");
     } catch (err) {
-      setMsg(err.response?.data?.message || "Error");
+      showError(err.response?.data?.message || "Error");
     } finally {
       setLoading(false);
+      inFlightRef.current = false;
     }
+  };
+
+  // STEP 2 — issue the enrolment QR. Still writes nothing: the secret comes
+  // back inside a signed, short-lived token that the create request hands back.
+  const generateQr = useCallback(async () => {
+    if (inFlightRef.current) return;
+
+    inFlightRef.current = true;
+    setMfaStatus("generating");
+    setMfaMsg("");
+
+    try {
+      const { data } = await API.post("/admin/add/draft", detailsPayload());
+      setQr(data.qrImage);
+      setDraftToken(data.draftToken);
+      setMfaStatus("ready");
+    } catch (err) {
+      setMfaStatus(qr ? "ready" : "idle");
+      setMfaMsg(err.response?.data?.message || "Could not generate the QR code");
+    } finally {
+      inFlightRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qr, name, rollNo, email, course, gender, year, batch, position, linkedin, phone]);
+
+  // STEP 3 — the only call that creates anything. The server verifies the code
+  // against the draft before it touches Firestore, Firebase Auth or Cloudinary.
+  const completeCreation = useCallback(
+    async (code) => {
+      if (inFlightRef.current) return;
+
+      inFlightRef.current = true;
+      setMfaStatus("submitting");
+      setMfaMsg("");
+
+      const fd = new FormData();
+      fd.append("image", file);
+      fd.append("name", name);
+      fd.append("rollNo", rollNo);
+      fd.append("email", email);
+      fd.append("password", password);
+      fd.append("course", course);
+      fd.append("gender", gender);
+      fd.append("year", year);
+      fd.append("batch", batch);
+      fd.append("position", position);
+      fd.append("linkedin", linkedin);
+      fd.append("phone", formattedPhone());
+      fd.append("role", "admin");
+      fd.append("draftToken", draftToken);
+      fd.append("mfaCode", code);
+
+      try {
+        await API.post("/admin/add", fd, {
+          onUploadProgress: (p) =>
+            setUploadProgress(Math.round((p.loaded / p.total) * 100)),
+        });
+
+        // Leaving the flow is what deactivates the navigation guard, so drop the
+        // phase before navigating.
+        setPhase("form");
+        setMsgTone("success");
+        setMsg("Admin Created");
+        navigate("/dashboard/admins", { replace: true });
+      } catch (err) {
+        const failure = err.response?.data;
+
+        // A dead or mismatched draft cannot be retried with the same QR — send
+        // the creator back to step 1 rather than letting them retype a code
+        // that can never verify.
+        if (failure?.code === "DRAFT_INVALID" || failure?.code === "DRAFT_STALE") {
+          setQr("");
+          setDraftToken("");
+          setMfaStatus("idle");
+        } else {
+          setMfaStatus("ready");
+        }
+
+        setMfaMsg(failure?.message || "Could not create the admin");
+      } finally {
+        inFlightRef.current = false;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [draftToken, file, name, rollNo, email, password, course, gender, year, batch, position, linkedin, phone, navigate]
+  );
+
+  // Aborting costs nothing to undo — there is nothing stored to undo — so it
+  // just closes the modal and hands the form back with the details intact.
+  const abortCreation = () => {
+    if (mfaStatus === "submitting") return;
+    setPhase("form");
+    setQr("");
+    setDraftToken("");
+    setMfaStatus("idle");
+    setMfaMsg("");
+    setConfirmingAbort(false);
+    setMsgTone("info");
+    setMsg("Admin creation cancelled — nothing was saved.");
+  };
+
+  // Read through a ref so the handler identity stays stable for the guard's
+  // event listeners while still seeing the current status.
+  const mfaStatusRef = useRef(mfaStatus);
+  useEffect(() => {
+    mfaStatusRef.current = mfaStatus;
+  }, [mfaStatus]);
+
+  const requestAbort = useCallback(() => {
+    if (mfaStatusRef.current !== "submitting") setConfirmingAbort(true);
+  }, []);
+
+  // Browser Back and tab close both land on the same confirmation the Cancel
+  // button raises. Nothing is at risk either way; this stops the creator from
+  // silently losing a filled-in form.
+  useNavigationGuard(phase === "mfa", requestAbort);
+
+  const leavePage = () => {
+    if (phase === "mfa") return requestAbort();
+    navigate("/dashboard/admins");
   };
 
   const validatePassword = (password) => {
@@ -265,7 +412,7 @@ export default function AddAdmin() {
           {/* Row 1: Back button */}
           <div className="flex items-center justify-between">
             <button
-              onClick={() => navigate("/dashboard/admins")}
+              onClick={leavePage}
               className="flex items-center gap-2 px-4 py-2 bg-slate-800/50 hover:bg-slate-700/50 border border-slate-700/50 rounded-xl transition-all duration-200 group"
             >
               <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-1" />
@@ -293,7 +440,7 @@ export default function AddAdmin() {
         <div className="hidden sm:flex items-center gap-4">
           {/* Back button on left */}
           <button
-            onClick={() => navigate("/dashboard/admins")}
+            onClick={leavePage}
             className="flex items-center gap-2 px-4 py-2 bg-slate-800/50 hover:bg-slate-700/50 border border-slate-700/50 rounded-xl transition-all duration-200 group shrink-0"
           >
             <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-1" />
@@ -324,8 +471,10 @@ export default function AddAdmin() {
       {msg && (
         <div
           className={`p-4 rounded-xl mb-6 ${
-            msg.includes("Created")
+            msgTone === "success"
               ? "bg-green-500/10 border border-green-500/20 text-green-400"
+              : msgTone === "info"
+              ? "bg-amber-500/10 border border-amber-500/20 text-amber-300"
               : "bg-red-500/10 border border-red-500/20 text-red-400"
           }`}
         >
@@ -336,6 +485,10 @@ export default function AddAdmin() {
       {/* FORM */}
       <div className="bg-slate-800/30 border border-slate-700/50 rounded-2xl p-6 shadow-xl backdrop-blur-xl">
         <form onSubmit={submit} className="grid grid-cols-1 gap-6 lg:gap-10">
+          {/* A disabled fieldset locks every control inside it natively, so the
+              details cannot drift while they are being validated or while the
+              MFA step is bound to them. `contents` keeps the grid layout. */}
+          <fieldset disabled={formLocked} className="contents">
           {/* DETAILS GRID */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Input
@@ -540,19 +693,27 @@ export default function AddAdmin() {
                 <Image className="w-4 h-4" />
                 Profile Photo <span className="text-red-400">*</span>
               </label>
+              {/* A div takes no part in fieldset[disabled], so the lock is
+                  applied by hand here. */}
               <div
-                className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all
+                className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all
+      ${formLocked ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
       ${
         isDragging
           ? "border-indigo-500 bg-slate-900/40"
           : file
           ? "border-slate-700"
+          : formLocked
+          ? "border-slate-700"
           : "border-slate-600 hover:border-indigo-500 hover:bg-slate-900/30"
       }`}
-                onClick={() => fileInputRef.current.click()}
+                onClick={() => {
+                  if (formLocked) return;
+                  fileInputRef.current.click();
+                }}
                 onDragOver={(e) => {
                   e.preventDefault();
-                  setIsDragging(true);
+                  if (!formLocked) setIsDragging(true);
                 }}
                 onDragLeave={(e) => {
                   e.preventDefault();
@@ -561,6 +722,7 @@ export default function AddAdmin() {
                 onDrop={(e) => {
                   e.preventDefault();
                   setIsDragging(false);
+                  if (formLocked) return;
                   handleFile(e.dataTransfer.files[0]);
                 }}
               >
@@ -573,7 +735,8 @@ export default function AddAdmin() {
                     />
                     <button
                       type="button"
-                      className="absolute -top-2 -right-2 bg-red-500 p-1 rounded-full"
+                      disabled={formLocked}
+                      className="absolute -top-2 -right-2 bg-red-500 p-1 rounded-full disabled:opacity-50 disabled:cursor-not-allowed"
                       onClick={(e) => {
                         e.stopPropagation();
                         removeImage();
@@ -607,13 +770,42 @@ export default function AddAdmin() {
           {/* SUBMIT */}
           <button
             type="submit"
-            disabled={loading}
-            className="w-full bg-linear-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 mt-4 py-3 rounded-xl text-white font-semibold"
+            disabled={formLocked}
+            className="w-full bg-linear-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 mt-4 py-3 rounded-xl text-white font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:from-indigo-600 disabled:hover:to-purple-600 flex items-center justify-center gap-2"
           >
-            {loading ? "Creating..." : "Create Admin"}
+            {loading ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Checking details...
+              </>
+            ) : phase === "mfa" ? (
+              "Finish MFA setup to create"
+            ) : (
+              "Create Admin"
+            )}
           </button>
+          </fieldset>
         </form>
       </div>
+
+      {/* Remounted per QR so the typed code never outlives the secret it was
+          for, and unmounted on abort so nothing survives a cancelled attempt. */}
+      {phase === "mfa" && (
+        <MfaEnrollModal
+          key={qr || "pending-qr"}
+          email={email}
+          qr={qr}
+          status={mfaStatus}
+          progress={uploadProgress}
+          error={mfaMsg}
+          confirmingAbort={confirmingAbort}
+          onGenerate={generateQr}
+          onSubmit={completeCreation}
+          onRequestAbort={requestAbort}
+          onCancelAbort={() => setConfirmingAbort(false)}
+          onConfirmAbort={abortCreation}
+        />
+      )}
     </div>
   );
 }

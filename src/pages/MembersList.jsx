@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import API from "../services/api";
+import { getSession } from "../services/session";
 import {
   Users,
   Search,
@@ -113,14 +114,15 @@ export default function MembersList() {
 
   const fetchMembers = async () => {
     try {
-      // Get current admin info first
-      const adminRes = await API.get("/admin/me");
-      setCurrentAdmin(adminRes.data.admin);
+      // Both at once: the session is usually already cached, and the members
+      // request should not wait on it either way.
+      const [admin, membersRes] = await Promise.all([
+        getSession(),
+        API.get("/admin/members/all"),
+      ]);
 
-      // Then fetch members - use the corrected admin endpoint
-      const membersRes = await API.get("/admin/members/all"); // This should work now
-      const data = membersRes.data;
-      setMembers(data);
+      setCurrentAdmin(admin);
+      setMembers(membersRes.data);
 
       setBatchFilter(getCurrentBatch());
     } catch (err) {

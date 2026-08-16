@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import API from "../services/api";
+import { getSession } from "../services/session";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
@@ -42,6 +43,11 @@ export default function AddMember() {
   const fileInputRef = useRef(null);
   const [phoneTouched, setPhoneTouched] = useState(false);
 
+  // Belt and braces against duplicate submissions: `loading` disables the
+  // button, this blocks a second call that slips through before React repaints
+  // (double Enter, a fast double click, a stray re-fire).
+  const inFlightRef = useRef(false);
+
   const [positions, setPositions] = useState([]);
   const [courses, setCourses] = useState([]);
 
@@ -49,8 +55,8 @@ export default function AddMember() {
 
   // Fetch current admin info
   useEffect(() => {
-    API.get("/admin/me")
-      .then((res) => setCurrentAdmin(res.data.admin))
+    getSession()
+      .then(setCurrentAdmin)
       .catch(console.error);
   }, []);
 
@@ -170,12 +176,18 @@ export default function AddMember() {
     setMsg("");
   };
 
+  // A div takes no part in fieldset[disabled], so these two check the lock
+  // themselves.
   const handleDrop = (e) => {
     e.preventDefault();
+    if (loading) return;
     handleFile(e.dataTransfer.files[0]);
   };
 
-  const handleClickUpload = () => fileInputRef.current?.click();
+  const handleClickUpload = () => {
+    if (loading) return;
+    fileInputRef.current?.click();
+  };
 
   const removeImage = () => {
     setFile(null);
@@ -198,6 +210,8 @@ export default function AddMember() {
   const submit = async (e) => {
     e.preventDefault();
 
+    if (inFlightRef.current) return;
+
     if (!file) return setMsg("Select an image");
 
     // Validate phone
@@ -207,6 +221,7 @@ export default function AddMember() {
       return;
     }
 
+    inFlightRef.current = true;
     setLoading(true);
     setUploadProgress(5);
 
@@ -240,11 +255,13 @@ export default function AddMember() {
       });
 
       setMsg("Member Added");
+      // Stays locked until the reload replaces the page — releasing it here
+      // would reopen the form for a second submission of the same member.
       setTimeout(() => window.location.reload(), 1200);
     } catch (err) {
       setMsg(err.response?.data?.message || "Error");
-    } finally {
       setLoading(false);
+      inFlightRef.current = false;
     }
   };
 
@@ -334,6 +351,9 @@ export default function AddMember() {
       {/* Form Card */}
       <div className="bg-slate-800/30 backdrop-blur-xl border border-slate-700/50 rounded-2xl shadow-2xl overflow-hidden">
         <form onSubmit={submit} className="p-4 sm:p-6 lg:p-8">
+          {/* A disabled fieldset locks every control inside it natively, so the
+              details cannot drift while the member is being created. */}
+          <fieldset disabled={loading} className="contents">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8">
             {/* Left Column - Personal Information */}
             <div className="space-y-6">
@@ -793,6 +813,7 @@ export default function AddMember() {
               )}
             </button>
           </div>
+          </fieldset>
         </form>
       </div>
     </div>
