@@ -1,18 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import API from "../services/api";
-import {
-  Calendar,
-  Search,
-  Filter,
-  Edit3,
-  Trash2,
-  MapPin,
-  User,
-  Clock,
-  ChevronDown,
-  Plus,
-} from "lucide-react";
+import { Calendar, Search, Filter, ChevronDown } from "lucide-react";
+import EventCard from "../components/EventCard";
+import { useEventStatuses, getStatusLabel } from "../utils/eventStatus";
 
 export default function EventsList() {
   const [events, setEvents] = useState([]);
@@ -26,7 +17,11 @@ export default function EventsList() {
 
   const navigate = useNavigate();
 
-  const [expanded, setExpanded] = useState(false);
+  // Live status per event, derived from the event window instead of the status
+  // string the server persisted at page-load time. The map keeps its identity
+  // until an event actually changes status, so this does not re-render the
+  // list every second.
+  const statuses = useEventStatuses(events);
 
   // Generate batch options and get current batch
   const getCurrentBatch = () => {
@@ -59,15 +54,18 @@ export default function EventsList() {
   };
 
   // Check if current admin can edit/delete an event
-  const canModifyEvent = (eventBatch) => {
-    if (!currentAdmin) return false;
+  const canModifyEvent = useCallback(
+    (eventBatch) => {
+      if (!currentAdmin) return false;
 
-    // Superadmin can modify anyone
-    if (currentAdmin.role === "superadmin") return true;
+      // Superadmin can modify anyone
+      if (currentAdmin.role === "superadmin") return true;
 
-    // Regular admin can only modify their batch events
-    return currentAdmin.batch === eventBatch;
-  };
+      // Regular admin can only modify their batch events
+      return currentAdmin.batch === eventBatch;
+    },
+    [currentAdmin]
+  );
 
   const fetchEvents = async () => {
     try {
@@ -92,45 +90,48 @@ export default function EventsList() {
     fetchEvents();
   }, []);
 
-  const handleDelete = async (id) => {
+  const handleDelete = useCallback(async (id) => {
     try {
       await API.delete(`/events/${id}`);
       setEvents((prev) => prev.filter((e) => e._id !== id));
     } catch (err) {
       alert(err.response?.data?.message || "Delete failed");
     }
-  };
+  }, []);
 
-  const handleEdit = (event) => {
-    if (!canModifyEvent(event.batch)) {
-      alert("You can only edit events from your own batch");
-      return;
-    }
-    navigate(`/dashboard/events/edit/${event._id}`);
-  };
-
-  const handleDeleteWithCheck = async (event) => {
-    if (!canModifyEvent(event.batch)) {
-      alert("You can only delete events from your own batch");
-      return;
-    }
-
-    if (!confirm(`Are you sure you want to delete "${event.name}"?`)) return;
-
-    try {
-      await handleDelete(event._id);
-    } catch (err) {
-      if (err.response?.status === 403) {
-        alert("Permission denied: " + err.response.data.message);
-      } else {
-        alert(err.response?.data?.message || "Delete failed");
+  // Stable identities so memoized cards are not re-rendered by every parent
+  // render (a status flip, a keystroke in the search box).
+  const handleEdit = useCallback(
+    (event) => {
+      if (!canModifyEvent(event.batch)) {
+        alert("You can only edit events from your own batch");
+        return;
       }
-    }
-  };
+      navigate(`/dashboard/events/edit/${event._id}`);
+    },
+    [canModifyEvent, navigate]
+  );
 
-  const uniqueBatches = useMemo(
-    () => [...new Set(events.map((e) => e.batch).filter(Boolean))],
-    [events]
+  const handleDeleteWithCheck = useCallback(
+    async (event) => {
+      if (!canModifyEvent(event.batch)) {
+        alert("You can only delete events from your own batch");
+        return;
+      }
+
+      if (!confirm(`Are you sure you want to delete "${event.name}"?`)) return;
+
+      try {
+        await handleDelete(event._id);
+      } catch (err) {
+        if (err.response?.status === 403) {
+          alert("Permission denied: " + err.response.data.message);
+        } else {
+          alert(err.response?.data?.message || "Delete failed");
+        }
+      }
+    },
+    [canModifyEvent, handleDelete]
   );
 
   // Get filtered events for current batch
@@ -139,46 +140,33 @@ export default function EventsList() {
     return events.filter((e) => e.batch === batchFilter);
   }, [events, batchFilter]);
 
-  // Get unique statuses only from current batch
+  // Get unique statuses only from current batch (live, not the stored value)
   const uniqueStatuses = useMemo(
-    () => [...new Set(currentBatchEvents.map((e) => e.status).filter(Boolean))],
-    [currentBatchEvents]
+    () =>
+      [
+        ...new Set(
+          currentBatchEvents
+            .map((e) => statuses[e._id] || e.status)
+            .filter(Boolean)
+        ),
+      ],
+    [currentBatchEvents, statuses]
   );
 
-  const filtered = currentBatchEvents.filter((e) => {
-    if (search && !e.name.toLowerCase().includes(search.toLowerCase()))
-      return false;
-    if (statusFilter && e.status !== statusFilter) return false;
-    return true;
-  });
+  const filtered = useMemo(
+    () =>
+      currentBatchEvents.filter((e) => {
+        if (search && !e.name.toLowerCase().includes(search.toLowerCase()))
+          return false;
+        if (statusFilter && (statuses[e._id] || e.status) !== statusFilter)
+          return false;
+        return true;
+      }),
+    [currentBatchEvents, search, statusFilter, statuses]
+  );
 
   // Count events in current batch
   const currentBatchCount = currentBatchEvents.length;
-
-  // Format date
-  const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString("en-IN", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    });
-  };
-
-  // Get status badge color
-  const getStatusColor = (status) => {
-    switch (status) {
-      case "upcoming":
-        return "bg-blue-500/20 text-blue-300 border-blue-500/30";
-      case "ongoing":
-        return "bg-green-500/20 text-green-300 border-green-500/30";
-      case "completed":
-        return "bg-slate-500/20 text-slate-300 border-slate-500/30";
-      case "cancelled":
-        return "bg-red-500/20 text-red-300 border-red-500/30";
-      default:
-        return "bg-slate-500/20 text-slate-300 border-slate-500/30";
-    }
-  };
 
   if (loading) {
     return (
@@ -318,7 +306,7 @@ export default function EventsList() {
                 </option>
                 {uniqueStatuses.map((s) => (
                   <option key={s} value={s} className="bg-slate-800 text-white">
-                    {s.charAt(0).toUpperCase() + s.slice(1)}
+                    {getStatusLabel(s)}
                   </option>
                 ))}
               </select>
@@ -360,210 +348,15 @@ export default function EventsList() {
 
       {/* Event Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
-        {filtered.map((e) => {
-          const canModify = canModifyEvent(e.batch);
-          return (
-            <div
-              key={e._id}
-              className={`bg-slate-800/30 backdrop-blur-xl border border-slate-700/50 rounded-2xl overflow-hidden shadow-xl hover:shadow-2xl transition-all duration-300 hover:transform hover:scale-[1.02] group`}
-            >
-              {/* Event Image */}
-              <div className="relative">
-                <img
-                  src={e.image}
-                  alt={e.name}
-                  className="w-full h-70 object-cover"
-                />
-                <div className="absolute inset-0 bg-linear-to-t from-slate-900/60 to-transparent"></div>
-
-                {/* Event Name Only */}
-                <div className="absolute bottom-3 left-4 right-4">
-                  <h3 className="text-lg font-bold text-white text-left line-clamp-1">
-                    {e.name}
-                  </h3>
-                </div>
-              </div>
-
-              {/* Event Details */}
-              <div className="p-4 space-y-4">
-                {/* Status & Batch Badges - Below Image */}
-                <div className="flex items-center justify-between">
-                  {/* Status Badge */}
-                  <div
-                    className={`px-3 py-1 rounded-lg border text-xs font-semibold ${getStatusColor(
-                      e.status
-                    )}`}
-                  >
-                    {e.status.charAt(0).toUpperCase() + e.status.slice(1)}
-                  </div>
-
-                  {/* Batch Badge */}
-                  <div className="px-3 py-1 bg-slate-700/50 rounded-lg text-xs font-semibold text-slate-300">
-                    {e.batch}
-                  </div>
-                </div>
-
-                {/* Date & Time - Equal Alignment */}
-                <div className="flex items-center justify-between text-sm">
-                  <div className="flex items-center gap-2 text-slate-300">
-                    <Calendar className="w-4 h-4 text-slate-400" />
-                    <span>{formatDate(e.date)}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-slate-300">
-                    <Clock className="w-4 h-4 text-slate-400" />
-                    <span>{e.time}</span>
-                  </div>
-                </div>
-
-                {/* Venue - Full Width */}
-                <div className="flex items-center gap-2 text-sm text-slate-300">
-                  <MapPin className="w-4 h-4 text-slate-400" />
-                  <span className="line-clamp-1">{e.venue}</span>
-                </div>
-
-                {/* Speaker - Full Width */}
-                {e.speaker && (
-                  <div className="flex items-center gap-2 text-sm text-slate-300">
-                    <User className="w-4 h-4 text-slate-400" />
-                    <span className="line-clamp-1">{e.speaker}</span>
-                  </div>
-                )}
-
-                <div className="relative">
-                  <div
-                    className={`text-sm text-slate-400 leading-relaxed whitespace-pre-wrap transition-all duration-300 ${
-                      expanded ? "max-h-none" : "max-h-20 overflow-hidden"
-                    }`}
-                  >
-                    {e.description}
-                  </div>
-
-                  {/* Gradient fade when collapsed */}
-                  {!expanded && e.description.length > 150 && (
-                    <div className="absolute bottom-0 left-0 right-0 h-4 bg-linear-to-t from-slate-900 via-slate-900/80 to-transparent pointer-events-none"></div>
-                  )}
-
-                  {/* Show more/less button */}
-                  {e.description.length > 150 && (
-                    <div className="flex justify-start mt-2">
-                      <button
-                        onClick={() => setExpanded(!expanded)}
-                        className="flex items-center gap-1 text-yellow-500 hover:text-yellow-400 text-xs font-medium px-3 py-1.5 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-600 rounded-lg transition-all duration-200 hover:scale-105"
-                      >
-                        {expanded ? (
-                          <>
-                            <svg
-                              className="w-3 h-3"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M5 15l7-7 7 7"
-                              />
-                            </svg>
-                            Show less
-                          </>
-                        ) : (
-                          <>
-                            <svg
-                              className="w-3 h-3"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M19 9l-7 7-7-7"
-                              />
-                            </svg>
-                            Show more
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {/* Created/Updated Info - Equal Alignment */}
-                <div className="flex items-start justify-between text-[11px] text-slate-500 leading-tight space-y-1">
-                  {/* Left - Created By */}
-                  <div className="flex-1">
-                    {e.createdBy && (
-                      <div>
-                        <div>
-                          <span className="text-slate-400">Created: </span>
-                          <span className="text-slate-300">
-                            {e.createdBy.name || "Unknown"}
-                          </span>
-                        </div>
-                        {e.createdBy.email && (
-                          <div className="text-slate-400 line-clamp-1">
-                            {e.createdBy.email}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Right - Updated By */}
-                  <div className="flex-1 text-right">
-                    {e.updatedBy && (
-                      <div>
-                        <div>
-                          <span className="text-slate-400">Updated: </span>
-                          <span className="text-slate-300">
-                            {e.updatedBy.name || "Unknown"}
-                          </span>
-                        </div>
-                        {e.updatedBy.email && (
-                          <div className="text-slate-400 line-clamp-1">
-                            {e.updatedBy.email}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Action Buttons */}
-                <div className="flex gap-2 pt-3 border-t border-slate-700/50">
-                  {canModify ? (
-                    <>
-                      <button
-                        onClick={() => handleEdit(e)}
-                        className="flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl transition-all duration-200 text-sm font-medium bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white"
-                      >
-                        <Edit3 className="w-3 h-3" />
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDeleteWithCheck(e)}
-                        className="flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl transition-all duration-200 text-sm font-medium border bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 border-red-500/20 hover:border-red-500/30"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        Delete
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => handleEdit(e)}
-                      className="flex-1 flex items-center justify-center gap-2 py-1 px-2 rounded-lg transition-all duration-200 text-xs font-medium bg-slate-800/30 text-slate-500 cursor-not-allowed"
-                      disabled
-                    >
-                      View Only
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })}
+        {filtered.map((e) => (
+          <EventCard
+            key={e._id}
+            event={e}
+            canModify={canModifyEvent(e.batch)}
+            onEdit={handleEdit}
+            onDelete={handleDeleteWithCheck}
+          />
+        ))}
       </div>
       {/* Empty State */}
       {filtered.length === 0 && (

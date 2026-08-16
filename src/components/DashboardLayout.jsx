@@ -177,7 +177,7 @@ export default function DashboardLayout({ setAuthed }) {
         bg-slate-950/80 backdrop-blur-xl border-r border-slate-800/50 flex flex-col shadow-2xl md:translate-x-0`}
       >
         {/* Header */}
-        <div className="px-4 sm:px-6 py-3 border-b border-slate-800/50">
+        <div className="px-4 sm:px-6 py-3">
           <div className="flex items-center gap-3 mb-3">
             <img
               src="/datalyticscit_logo.png"
