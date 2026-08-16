@@ -1,5 +1,7 @@
 // admin/src/components/DashboardLayout.jsx
 import { Outlet, Link, useLocation, useNavigate } from "react-router-dom";
+import { signOut } from "firebase/auth";
+import { auth } from "../services/firebase";
 import {
   Users,
   UserPlus,
@@ -83,9 +85,12 @@ export default function DashboardLayout({ setAuthed }) {
 
   const logout = async () => {
     try {
+      // Clears the server-side mfaAuthTime claim first, so the next sign-in
+      // cannot reuse this session's second factor. Then ends the Firebase session.
       await API.post("/admin/logout");
     } catch (_) {
     } finally {
+      await signOut(auth).catch(() => {});
       setAuthed(false);
       navigate("/login");
     }
@@ -161,7 +166,9 @@ export default function DashboardLayout({ setAuthed }) {
   }, [location.pathname]);
 
   return (
-    <div className="min-h-screen bg-linear-to-br from-slate-900 via-slate-950 to-black text-slate-100 flex">
+    // h-screen + overflow-hidden pins the shell to the viewport so the sidebar
+    // and header stay put; <main> below is the only scrollable region.
+    <div className="h-screen overflow-hidden bg-linear-to-br from-slate-900 via-slate-950 to-black text-slate-100 flex">
       {/* Sidebar */}
       <aside
         className={`${
@@ -187,7 +194,7 @@ export default function DashboardLayout({ setAuthed }) {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-3 sm:p-4 space-y-1 overflow-y-auto">
+        <nav className="flex-1 min-h-0 p-3 sm:p-4 space-y-1 overflow-y-auto">
           {/* Members Dropdown */}
           <div className="pt-2">
             <button
@@ -400,7 +407,7 @@ export default function DashboardLayout({ setAuthed }) {
         </nav>
 
         {/* Footer */}
-        <div className="p-3 sm:p-4 border-t border-slate-800/50">
+        <div className="shrink-0 p-3 sm:p-4 border-t border-slate-800/50">
           <button
             onClick={logout}
             className="w-full flex items-center justify-center gap-2 py-2 sm:py-3 px-3 sm:px-4 rounded-xl bg-linear-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 transition-all duration-200 transform hover:scale-[1.02] font-medium text-sm shadow-lg group"
@@ -420,8 +427,8 @@ export default function DashboardLayout({ setAuthed }) {
       )}
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0 w-full">
-        <header className="border-b border-slate-800/50 bg-slate-950/30 backdrop-blur-lg px-5 sm:px-6 py-2 sm:py-3 flex items-center justify-between">
+      <div className="flex-1 flex flex-col min-w-0 w-full h-full overflow-hidden">
+        <header className="shrink-0 border-b border-slate-800/50 bg-slate-950/30 backdrop-blur-lg px-5 sm:px-6 py-2 sm:py-3 flex items-center justify-between">
           <div className="flex items-center gap-2 sm:gap-4">
             <h2 className="text-2xl sm:text-2xl font-bold bg-linear-to-r from-white to-slate-300 bg-clip-text text-transparent">
               Dashboard
@@ -504,7 +511,7 @@ export default function DashboardLayout({ setAuthed }) {
           </div>
         </header>
 
-        <main className="flex-1 p-3 sm:p-4 bg-linear-to-br from-slate-900/20 via-slate-950/20 to-black/20 overflow-auto">
+        <main className="flex-1 min-h-0 p-3 sm:p-4 bg-linear-to-br from-slate-900/20 via-slate-950/20 to-black/20 overflow-y-auto">
           <Outlet />
         </main>
       </div>

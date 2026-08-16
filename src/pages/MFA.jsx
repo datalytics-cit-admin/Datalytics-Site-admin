@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import API from "../services/api";
+import { auth, getIdToken } from "../services/firebase";
 import { Shield, QrCode, Smartphone, ArrowLeft } from "lucide-react";
 
 export default function MFA({ setAuthed }) {
@@ -10,28 +11,32 @@ export default function MFA({ setAuthed }) {
 
   const [qr, setQr] = useState("");
   const [code, setCode] = useState("");
-  const [adminId, setAdminId] = useState(id || null);
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
   const isSetupMode = mode === "setup";
   const isFromCreate = location.state?.fromCreate || false;
 
-  // If verifying login
+  // Two distinct flows:
+  //  - login (setup or verify): the signed-in Firebase user completing their own
+  //    second factor. Identity comes from the ID token; no admin id is sent.
+  //  - fromCreate: a signed-in superadmin enrolling the admin they just created,
+  //    identified by the :id route param and authorised by their own session.
   useEffect(() => {
-    if (mode === "verify" && !adminId) {
-      API.get("/admin/me")
-        .then((res) => setAdminId(res.data.admin._id))
-        .catch(() => setMsg("Session expired, please login again"));
+    if (!isFromCreate && !auth.currentUser) {
+      setMsg("Session expired, please login again");
     }
-  }, []);
+  }, [isFromCreate]);
 
   // SETUP MFA (QR Generation)
   const handleSetup = async () => {
     setLoading(true);
     setMsg("");
     try {
-      const res = await API.post("/admin/setup-mfa", { adminId });
+      const res = isFromCreate
+        ? await API.post("/admin/enroll-mfa", { adminId: id })
+        : await API.post("/admin/setup-mfa");
+
       setQr(res.data.qrImage);
       setMsg(
         "QR code generated successfully! Scan it with Google Authenticator."
@@ -49,18 +54,17 @@ export default function MFA({ setAuthed }) {
     setMsg("");
 
     try {
-      const res = await API.post("/admin/verify-mfa", {
-        adminId,
-        code,
-        fromCreate: isFromCreate,
-      });
-
-      // CASE 1: This was from AddAdmin → DO NOT LOGIN
-      if (res.data.fromCreate === true) {
+      // CASE 1: From AddAdmin → confirm the new admin's MFA, DO NOT LOGIN
+      if (isFromCreate) {
+        await API.post("/admin/confirm-mfa", { adminId: id, code });
         return navigate("/dashboard/admins", { replace: true });
       }
 
-      // NORMAL LOGIN
+      // CASE 2: Normal login. The server stamps an mfaAuthTime claim bound to
+      // this sign-in; the ID token must be force-refreshed to carry it.
+      await API.post("/admin/verify-mfa", { code });
+      await getIdToken(true);
+
       setAuthed(true);
       return navigate("/dashboard", { replace: true });
     } catch (err) {

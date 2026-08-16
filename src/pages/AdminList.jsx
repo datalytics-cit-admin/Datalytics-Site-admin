@@ -96,61 +96,35 @@ export default function AdminList() {
   }, []);
 
   // Check if current user can edit/delete a specific admin
+  // These MIRROR server/utils/adminPermissions.js#canManageAdmin. The server is
+  // authoritative and returns 403 regardless; this only decides which buttons
+  // are offered. Keep the two in sync.
+  //
+  //  1. Nobody may delete their own account — superadmin included.
+  //  2. Superadmin has full control over every other record.
+  //  3. A regular admin may act only on admins they personally created.
+  //  4. Therefore previous boards' admins are read-only to the current board.
+  //  5. A regular admin may still edit (not delete) their own profile.
+
   const canEditAdmin = (targetAdmin) => {
-    // Super admin can edit anyone except other super admins
-    if (myRole === "superadmin") {
-      // Prevent super admin from editing other super admins
-      if (targetAdmin.role === "superadmin" && targetAdmin._id !== myId) {
-        return false;
-      }
-      return true;
-    }
+    if (myRole === "superadmin") return true;
 
-    // Regular admin logic:
     if (myRole === "admin") {
-      // 1. Can edit THEIR OWN profile (regardless of batch)
-      if (targetAdmin._id === myId) return true;
-
-      // 2. Can edit admins in NEXT batch (X+1) that they created
-      const myBatchYear = parseInt(myBatch?.split("-")[0]);
-      const targetBatchYear = parseInt(targetAdmin.batch?.split("-")[0]);
-
-      // Check if target admin is in next batch
-      const isNextBatch = targetBatchYear === myBatchYear + 1;
-
-      // Check if current user created this admin - FIXED APPROACH
-      const isCreatedByMe = checkIfCreatedByMe(targetAdmin);
-
-      return isNextBatch && isCreatedByMe;
+      if (targetAdmin._id === myId) return true;      // own profile
+      return checkIfCreatedByMe(targetAdmin);          // only admins they created
     }
 
     return false;
   };
 
-  // Check if current user can delete a specific admin
   const canDeleteAdmin = (targetAdmin) => {
-    // Super admin can delete anyone except themselves and other super admins
-    if (myRole === "superadmin") {
-      // Prevent super admin from deleting themselves or other super admins
-      if (targetAdmin._id === myId || targetAdmin.role === "superadmin") {
-        return false;
-      }
-      return true;
-    }
+    // Rule 1 — nobody deletes themselves, whatever their role.
+    if (targetAdmin._id === myId) return false;
 
-    // Regular admin logic:
+    if (myRole === "superadmin") return true;
+
     if (myRole === "admin") {
-      // 1. Can delete THEIR OWN profile
-      if (targetAdmin._id === myId) return true;
-
-      // 2. Can delete admins in NEXT batch (X+1) that they created
-      const myBatchYear = parseInt(myBatch?.split("-")[0]);
-      const targetBatchYear = parseInt(targetAdmin.batch?.split("-")[0]);
-
-      const isNextBatch = targetBatchYear === myBatchYear + 1;
-      const isCreatedByMe = checkIfCreatedByMe(targetAdmin);
-
-      return isNextBatch && isCreatedByMe;
+      return checkIfCreatedByMe(targetAdmin);
     }
 
     return false;

@@ -149,7 +149,7 @@ export default function App() {
         }
       />
       <Route
-        path="/mfa/:mode/:id"
+        path="/mfa/:mode/:id?"
         element={
           <>
             <PageTitle title="Two-Factor Authentication" />

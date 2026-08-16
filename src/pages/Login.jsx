@@ -1,7 +1,9 @@
 // admin/src/pages/Login.jsx
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { signInWithEmailAndPassword } from "firebase/auth";
 import API from "../services/api";
+import { auth } from "../services/firebase";
 
 export default function Login({ setAuthed }) {
   const [email, setEmail] = useState("");
@@ -17,25 +19,33 @@ export default function Login({ setAuthed }) {
     setLoading(true);
 
     try {
-      const res = await API.post("/admin/login", { email, password });
+      // Firebase verifies the password and issues an ID token. That token alone
+      // is NOT a session — the server still requires the second factor.
+      await signInWithEmailAndPassword(auth, email.trim(), password);
 
-      // If MFA is not set up → Setup MFA screen
-      if (res.data?.setupMFA && res.data?.adminId) {
-        return navigate(`/mfa/setup/${res.data.adminId}`);
+      const { data } = await API.get("/admin/mfa/state");
+
+      if (!data.mfaEnabled) {
+        return navigate("/mfa/setup", { state: { fromCreate: false } });
+      }
+      if (!data.mfaSatisfied) {
+        return navigate("/mfa/verify", { state: { fromCreate: false } });
       }
 
-      // If MFA is enabled, ask for verification code
-      if (res.data?.mfaRequired && res.data?.adminId) {
-        return navigate(`/mfa/verify/${res.data.adminId}`, {
-          state: { fromCreate: false },
-        });
-      }
-
-      // Normal Login
       setAuthed(true);
       navigate("/dashboard");
     } catch (err) {
-      setMsg(err.response?.data?.message || "Login failed");
+      const code = err?.code || "";
+      if (code.startsWith("auth/")) {
+        setMsg(
+          code === "auth/invalid-credential" || code === "auth/wrong-password" ||
+          code === "auth/user-not-found"
+            ? "Invalid email or password"
+            : "Sign-in failed. Please try again."
+        );
+      } else {
+        setMsg(err.response?.data?.message || "Login failed");
+      }
     } finally {
       setLoading(false);
     }
