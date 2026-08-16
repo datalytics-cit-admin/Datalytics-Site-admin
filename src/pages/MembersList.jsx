@@ -46,38 +46,22 @@ export default function MembersList() {
     return `${academicYearStart}-${academicYearEnd}`;
   };
 
-  const [allAdmins, setAllAdmins] = useState([]);
+  // The server flags these on the members payload. This page used to download
+  // the whole admin roster just to answer the same question — a second request
+  // on the dashboard's landing route, and on the production host every extra
+  // request costs hundreds of milliseconds before it does any work.
+  const superadminEmails = useMemo(
+    () =>
+      new Set(
+        members
+          .filter((m) => m.isSuperadmin && m.email)
+          .map((m) => m.email.toLowerCase())
+      ),
+    [members]
+  );
 
-  // Fetch all admins once
-  useEffect(() => {
-    const fetchAdmins = async () => {
-      try {
-        const adminRes = await API.get("/admin/all");
-        // Handle different possible response structures
-        const adminsData = adminRes.data?.admins || adminRes.data || [];
-        setAllAdmins(Array.isArray(adminsData) ? adminsData : []);
-      } catch (err) {
-        console.error("Error fetching admins:", err);
-        setAllAdmins([]);
-      }
-    };
-    fetchAdmins();
-  }, []);
-
-  // Check if member is superadmin (local check)
-  const isMemberSuperadmin = (memberEmail) => {
-    try {
-      if (!Array.isArray(allAdmins) || !memberEmail) return false;
-
-      const superadmin = allAdmins.find(
-        (admin) => admin.email === memberEmail && admin.role === "superadmin"
-      );
-      return !!superadmin;
-    } catch (error) {
-      console.error("Error in isMemberSuperadmin:", error);
-      return false;
-    }
-  };
+  const isMemberSuperadmin = (memberEmail) =>
+    !!memberEmail && superadminEmails.has(memberEmail.toLowerCase());
 
   const generateBatchOptions = () => {
     const currentYear = new Date().getFullYear();
