@@ -5,6 +5,19 @@
     <meta name="theme-color" content="#1e293b" />
     <link rel="icon" type="image/svg+xml/png" href="/datalyticscit_logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!--
+      Open the connections the app is certain to use while the bundle is still
+      downloading. In production the first API call otherwise pays DNS + TCP +
+      TLS before it can even send bytes; on localhost that cost is zero, which
+      is a large part of why the two feel so different.
+    -->
+    <link rel="preconnect" href="%VITE_API_URL%" crossorigin />
+    <link rel="dns-prefetch" href="%VITE_API_URL%" />
+    <link rel="preconnect" href="https://securetoken.googleapis.com" crossorigin />
+    <link rel="preconnect" href="https://identitytoolkit.googleapis.com" crossorigin />
+    <link rel="preconnect" href="https://res.cloudinary.com" crossorigin />
+
     <title>Datalytics CIT</title>
   </head>
   <body>

@@ -6,35 +6,60 @@
 // reads. On localhost that is invisible; over a real network it is most of the
 // wait before anything appears.
 //
-// This module makes the session a single shared value: concurrent callers
-// collapse onto one in-flight request, and later callers reuse the answer until
-// it goes stale. Role and batch do not change mid-session, so a few minutes of
-// reuse costs nothing in correctness.
+// Two things happen here:
+//   1. Concurrent callers collapse onto a single in-flight request.
+//   2. The last answer is persisted, so a reload renders from it immediately
+//      and revalidates in the background instead of blocking on a round trip.
+//
+// The stored record is only ever used for display and for hiding controls the
+// user cannot use. Every actual permission is enforced server-side on each
+// request, so a stale or edited copy grants nothing.
 import { useEffect, useState } from "react";
 import API from "./api";
+import { auth, authReady } from "./firebase";
 
-const TTL_MS = 5 * 60 * 1000;
+const STORAGE_KEY = "datalytics.session.v1";
 
-let cache = null; // { admin, at }
+// Fresh enough to use without asking again.
+const FRESH_MS = 5 * 60 * 1000;
+// Old enough that it still renders instantly, but is revalidated in the
+// background. Beyond this we wait for the network rather than show stale roles.
+const USABLE_MS = 12 * 60 * 60 * 1000;
+
+let cache = readStored();
 let inFlight = null;
 
-/** The cached admin without triggering a fetch — null if nothing is loaded. */
-export const peekSession = () => cache?.admin ?? null;
-
-/**
- * The signed-in admin. Served from cache when fresh, otherwise fetched once no
- * matter how many callers ask at the same moment.
- * Pass { force: true } after something changes the admin's own record.
- */
-export const getSession = ({ force = false } = {}) => {
-  if (!force) {
-    if (cache && Date.now() - cache.at < TTL_MS) return Promise.resolve(cache.admin);
-    if (inFlight) return inFlight;
+function readStored() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.admin?._id || typeof parsed.at !== "number") return null;
+    if (Date.now() - parsed.at > USABLE_MS) return null;
+    return parsed;
+  } catch {
+    return null;
   }
+}
 
+function writeStored(entry) {
+  try {
+    if (entry) localStorage.setItem(STORAGE_KEY, JSON.stringify(entry));
+    else localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Private mode or a full quota — the in-memory cache still works.
+  }
+}
+
+const fetchSession = () => {
   inFlight = API.get("/admin/me")
     .then((res) => {
-      cache = { admin: res.data.admin, at: Date.now() };
+      cache = {
+        admin: res.data.admin,
+        at: Date.now(),
+        uid: auth.currentUser?.uid ?? null,
+      };
+      writeStored(cache);
       return cache.admin;
     })
     .finally(() => {
@@ -44,16 +69,53 @@ export const getSession = ({ force = false } = {}) => {
   return inFlight;
 };
 
-/** Drop the cached session. Call on login and logout — never reuse one account's session for the next. */
+// A persisted record must never outlive the account it belongs to. Firebase
+// restores its session asynchronously, so this runs as soon as that is known —
+// off the critical path, and before any stale identity could matter. A missed
+// case still self-corrects: the revalidation 401s and the interceptor redirects.
+authReady.then((user) => {
+  if (!user || (cache?.uid && cache.uid !== user.uid)) clearSession();
+});
+
+/**
+ * The last known admin without any network access — null if nothing is stored.
+ * Survives a page reload, which is what lets the dashboard paint immediately.
+ */
+export const peekSession = () => cache?.admin ?? null;
+
+/**
+ * The signed-in admin. Resolves from cache when fresh, resolves from a stale
+ * copy while revalidating behind it, and otherwise fetches — once, no matter
+ * how many callers ask at the same moment.
+ *
+ * A background revalidation that 401s is handled by the api interceptor, which
+ * sends the user to /login or /mfa.
+ */
+export const getSession = ({ force = false } = {}) => {
+  if (force) return fetchSession();
+
+  const age = cache ? Date.now() - cache.at : Infinity;
+
+  if (age < FRESH_MS) return Promise.resolve(cache.admin);
+
+  if (age < USABLE_MS) {
+    if (!inFlight) fetchSession().catch(() => {});
+    return Promise.resolve(cache.admin);
+  }
+
+  return inFlight || fetchSession();
+};
+
+/** Drop the session everywhere. Call on login and logout — never hand one account's session to the next. */
 export const clearSession = () => {
   cache = null;
   inFlight = null;
+  writeStored(null);
 };
 
 /**
- * Hook form for components that only need the admin record. Renders
- * immediately from cache when it is already loaded, so a navigation between
- * dashboard pages shows content without a round trip.
+ * Hook form. Renders from the persisted record on the first paint when there is
+ * one, so navigating between dashboard pages costs no round trip at all.
  */
 export function useSession() {
   const [admin, setAdmin] = useState(peekSession);

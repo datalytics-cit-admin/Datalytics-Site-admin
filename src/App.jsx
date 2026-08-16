@@ -1,16 +1,19 @@
 // admin/src/App.jsx
 import { Routes, Route, Navigate } from "react-router-dom";
 import { lazy, Suspense, useEffect, useState } from "react";
-import { getSession, clearSession } from "./services/session";
+import { getSession, clearSession, peekSession } from "./services/session";
 import DashboardLayout from "./components/DashboardLayout";
 
-// Every page used to be in the first bundle, so opening the login screen also
-// downloaded the member editor, the event forms and the admin CRUD. Split per
-// route: the browser fetches a page's code when that route is first visited,
-// and Vite preloads the chunk for the route already being rendered.
-const Login = lazy(() => import("./pages/Login"));
+// The two landing screens stay in the main bundle. Splitting them out cost more
+// than it saved: the route chunk can only start downloading after the main
+// bundle has parsed, which delays the page's first data request by a whole
+// round trip — measured at ~700ms on the dashboard.
+import Login from "./pages/Login";
+import MembersList from "./pages/MembersList";
+
+// Everything else is fetched on first visit. Opening the dashboard no longer
+// also downloads the member editor, the event forms and the admin CRUD.
 const MFA = lazy(() => import("./pages/MFA"));
-const MembersList = lazy(() => import("./pages/MembersList"));
 const AddMember = lazy(() => import("./pages/AddMember"));
 const EditMember = lazy(() => import("./pages/EditMember"));
 const AdminList = lazy(() => import("./pages/AdminList"));
@@ -41,57 +44,53 @@ const PageTitle = ({ title }) => {
 };
 
 // Protected Route Component - WITH ALERT
+// This gate is a UX affordance, not a security boundary — every one of these
+// routes is enforced again on the server for each request it makes. That is why
+// it is safe to answer it from the persisted session and skip the round trip.
+const canAccessCurrentBatch = (admin) => {
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
+  const academicYearStart = currentMonth >= 5 ? currentYear : currentYear - 1;
+  const currentBatch = `${academicYearStart}-${academicYearStart + 1}`;
+
+  return admin.role === "superadmin" || admin.batch === currentBatch;
+};
+
+const permissionFor = (admin, requireCurrentBatch) => {
+  if (!admin) return null; // unknown — must ask the server
+  return requireCurrentBatch ? canAccessCurrentBatch(admin) : true;
+};
+
 const ProtectedRoute = ({ children, requireCurrentBatch = false, title }) => {
-  const [checking, setChecking] = useState(true);
-  const [hasPermission, setHasPermission] = useState(false);
-  const [showAlert, setShowAlert] = useState(false);
+  // Resolved synchronously whenever a session is already known, so navigating
+  // to a protected page renders it instead of a "Checking permissions..." card.
+  const initial = permissionFor(peekSession(), requireCurrentBatch);
+
+  const [checking, setChecking] = useState(initial === null);
+  const [hasPermission, setHasPermission] = useState(initial === true);
 
   useEffect(() => {
-    const checkPermission = async () => {
-      try {
-        // Shared with the app-level auth check and with the page being
-        // rendered — one request per load, not one per component.
-        const admin = await getSession();
+    let alive = true;
 
-        // Get current batch
-        const now = new Date();
-        const currentMonth = now.getMonth();
-        const currentYear = now.getFullYear();
-        const academicYearStart =
-          currentMonth >= 5 ? currentYear : currentYear - 1;
-        const academicYearEnd = academicYearStart + 1;
-        const currentBatch = `${academicYearStart}-${academicYearEnd}`;
-
-        // Check permissions
-        if (!requireCurrentBatch) {
-          setHasPermission(true);
-        } else {
-          // For routes that require current batch access
-          const canAccess =
-            admin.role === "superadmin" || admin.batch === currentBatch;
-          setHasPermission(canAccess);
-
-          if (!canAccess) {
-            setShowAlert(true);
-          }
+    // Still revalidates in the background; getSession only touches the network
+    // when its copy is stale.
+    getSession()
+      .then((admin) => {
+        if (!alive) return;
+        const allowed = permissionFor(admin, requireCurrentBatch);
+        setHasPermission(allowed);
+        if (!allowed) {
+          alert("Access denied. Only current batch admins can access this page.");
         }
-      } catch {
-        setHasPermission(false);
-      } finally {
-        setChecking(false);
-      }
+      })
+      .catch(() => alive && setHasPermission(false))
+      .finally(() => alive && setChecking(false));
+
+    return () => {
+      alive = false;
     };
-
-    checkPermission();
   }, [requireCurrentBatch]);
-
-  // Show alert when permission is denied
-  useEffect(() => {
-    if (showAlert) {
-      alert("Access denied. Only current batch admins can access this page.");
-      setShowAlert(false);
-    }
-  }, [showAlert]);
 
   if (checking) {
     return (
@@ -117,22 +116,22 @@ const ProtectedRoute = ({ children, requireCurrentBatch = false, title }) => {
 };
 
 export default function App() {
-  const [checking, setChecking] = useState(true);
-  const [authed, setAuthed] = useState(false);
+  // A known session means the app can render on the first frame. The check
+  // below still runs — it just no longer stands between the user and the UI.
+  // If it fails, the api interceptor redirects to /login or /mfa.
+  const knownAdmin = peekSession();
+
+  const [checking, setChecking] = useState(knownAdmin === null);
+  const [authed, setAuthed] = useState(knownAdmin !== null);
 
   useEffect(() => {
-    const verify = async () => {
-      try {
-        await getSession();
-        setAuthed(true);
-      } catch {
+    getSession()
+      .then(() => setAuthed(true))
+      .catch(() => {
         clearSession();
         setAuthed(false);
-      } finally {
-        setChecking(false);
-      }
-    };
-    verify();
+      })
+      .finally(() => setChecking(false));
   }, []);
 
   if (checking) {
