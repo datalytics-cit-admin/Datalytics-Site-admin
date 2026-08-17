@@ -29,6 +29,18 @@ const USABLE_MS = 12 * 60 * 60 * 1000;
 let cache = readStored();
 let inFlight = null;
 
+// A persisted record can outlive the session it describes. An admin can lock
+// this account down from a sign-in alert opened in a different browser, or on
+// their phone — nothing in this tab would hear about it, and the dashboard
+// would keep rendering from localStorage until some action happened to 401.
+//
+// So the first call after a page load always checks with the server, even when
+// the stored copy is fresh. It still paints from cache immediately; the check
+// runs behind it, and the api interceptor turns a 401 into a redirect. The
+// caching this module exists for was about navigating BETWEEN dashboard pages,
+// not about reloads, so this costs one request per hard load and nothing else.
+let revalidatedThisLoad = false;
+
 function readStored() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -95,6 +107,19 @@ export const getSession = ({ force = false } = {}) => {
   if (force) return fetchSession();
 
   const age = cache ? Date.now() - cache.at : Infinity;
+
+  // First call of this page load — always verify with the server, but do not
+  // make the user wait for it when there is something usable to show.
+  if (!revalidatedThisLoad) {
+    revalidatedThisLoad = true;
+    const checking = inFlight || fetchSession();
+
+    if (age < USABLE_MS) {
+      checking.catch(() => {});
+      return Promise.resolve(cache.admin);
+    }
+    return checking;
+  }
 
   if (age < FRESH_MS) return Promise.resolve(cache.admin);
 

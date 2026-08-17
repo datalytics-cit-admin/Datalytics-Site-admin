@@ -160,6 +160,11 @@ export default function App() {
           </>
         }
       />
+      {/* The verification prompt is a step over the login form, never its own
+          page. Anything still pointing here (an old bookmark, a stale tab) goes
+          to sign-in, where that step lives. */}
+      <Route path="/mfa/verify" element={<Navigate to="/login" replace />} />
+
       <Route
         path="/mfa/:mode/:id?"
         element={

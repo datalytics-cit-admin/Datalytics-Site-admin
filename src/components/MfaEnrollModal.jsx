@@ -6,6 +6,7 @@ import {
   Smartphone,
   Lock,
   AlertTriangle,
+  Camera,
   X,
 } from "lucide-react";
 
@@ -16,6 +17,9 @@ const CODE_LENGTH = 8;
  *
  * The gate is deliberate and one-directional:
  *   idle       → only "Generate QR Code" is live; the code box is locked
+ *   advising   → the screenshot warning, shown once before the first QR is
+ *                fetched — the secret is only ever displayed here, so the
+ *                creator has to be told to keep a copy *before* it appears
  *   generating → nothing is live
  *   ready      → the code box unlocks; "Complete Setup" stays locked until the
  *                code is the full length
@@ -39,6 +43,7 @@ export default function MfaEnrollModal({
   onConfirmAbort,
 }) {
   const [code, setCode] = useState("");
+  const [advising, setAdvising] = useState(false);
   const inputRef = useRef(null);
 
   const isReady = status === "ready";
@@ -46,6 +51,11 @@ export default function MfaEnrollModal({
   const isGenerating = status === "generating";
   const codeUnlocked = isReady && !isSubmitting;
   const canSubmit = codeUnlocked && code.length === CODE_LENGTH;
+
+  const generate = () => {
+    setAdvising(false);
+    onGenerate();
+  };
 
   // The caller remounts this on every new QR (and unmounts it on abort), so the
   // typed code is discarded with the secret it belonged to — no reset effects,
@@ -64,7 +74,7 @@ export default function MfaEnrollModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-slate-900 border border-slate-700/50 rounded-2xl shadow-2xl">
+      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden bg-slate-900 border border-slate-700/50 rounded-2xl shadow-2xl">
         {/* Header */}
         <div className="flex items-start justify-between gap-4 p-6 border-b border-slate-700/50">
           <div className="flex items-center gap-3">
@@ -127,19 +137,60 @@ export default function MfaEnrollModal({
                     className="w-44 h-44 rounded-xl border-2 border-slate-600 bg-white p-1"
                   />
                 </div>
+                <p className="flex items-center justify-center gap-1.5 text-xs text-amber-300/90">
+                  <Camera className="w-3.5 h-3.5 shrink-0" />
+                  Screenshot this — this screen won't show it again.
+                </p>
                 <button
                   type="button"
-                  onClick={onGenerate}
+                  onClick={generate}
                   disabled={isSubmitting || isGenerating}
                   className="w-full text-xs text-slate-400 hover:text-slate-200 underline underline-offset-2 disabled:opacity-40 disabled:cursor-not-allowed disabled:no-underline"
                 >
                   Scanned the wrong code? Generate a new QR
                 </button>
               </div>
+            ) : advising && !isGenerating ? (
+              /* The QR carries the TOTP secret and the server never re-issues
+                 the same one. Say that plainly here, while there is still
+                 nothing on screen to rush past. */
+              <div className="space-y-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+                <div className="flex gap-3">
+                  <Camera className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-amber-200">
+                      Take a screenshot of the QR code
+                    </p>
+                    <p className="text-sm text-amber-200/80">
+                      Save it somewhere safe before you scan it. If the new admin
+                      ever loses their phone, this image is what gets them back
+                      in. A copy is emailed to them once setup completes, but
+                      this screen will not show it again.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setAdvising(false)}
+                    className="sm:w-28 py-2.5 px-4 rounded-xl text-sm font-semibold bg-slate-700/60 hover:bg-slate-600/60 text-white transition-colors"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={generate}
+                    className="flex-1 py-2.5 px-4 rounded-xl text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors flex items-center justify-center gap-2"
+                  >
+                    <QrCode className="w-4 h-4" />
+                    Got it — show the QR code
+                  </button>
+                </div>
+              </div>
             ) : (
               <button
                 type="button"
-                onClick={onGenerate}
+                onClick={() => setAdvising(true)}
                 disabled={isGenerating || isSubmitting}
                 className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
@@ -199,14 +250,13 @@ export default function MfaEnrollModal({
               type="text"
               inputMode="numeric"
               autoComplete="one-time-code"
-              maxLength={CODE_LENGTH}
               value={code}
               disabled={!codeUnlocked}
               onChange={(e) =>
                 setCode(e.target.value.replace(/[^0-9]/g, "").slice(0, CODE_LENGTH))
               }
               placeholder={"0".repeat(CODE_LENGTH)}
-              className="w-full text-center text-2xl font-mono tracking-widest bg-slate-900/60 border border-slate-700 rounded-xl p-4 text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="w-full text-center text-2xl font-mono tracking-[0.55em] indent-[0.55em] bg-slate-900/60 border border-slate-700 rounded-xl p-4 text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
             />
           </div>
 

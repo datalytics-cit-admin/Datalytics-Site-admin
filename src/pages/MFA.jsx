@@ -3,6 +3,7 @@ import { useNavigate, useParams, useLocation } from "react-router-dom";
 import API from "../services/api";
 import { clearSession } from "../services/session";
 import { auth, getIdToken } from "../services/firebase";
+import { getLoginProof, clearLoginProof } from "../services/loginProof";
 import { Shield, QrCode, Smartphone, ArrowLeft } from "lucide-react";
 
 export default function MFA({ setAuthed }) {
@@ -26,11 +27,22 @@ export default function MFA({ setAuthed }) {
   // Two distinct flows:
   //  - login (setup or verify): the signed-in Firebase user completing their own
   //    second factor. Identity comes from the ID token; no admin id is sent.
+  //    Both endpoints additionally require the emailed-code proof issued on the
+  //    login page, so this route cannot be reached with a password alone.
   //  - fromCreate: a signed-in superadmin enrolling the admin they just created,
   //    identified by the :id route param and authorised by their own session.
+  //    That path has already passed both factors, so it carries no proof.
   useEffect(() => {
-    if (!isFromCreate && !auth.currentUser) {
+    if (isFromCreate) return;
+
+    if (!auth.currentUser) {
       setMsg("Session expired, please login again");
+      return;
+    }
+    // Arriving here directly — a bookmark, or a reload after the proof lapsed —
+    // cannot go anywhere: every endpoint this page calls will refuse it.
+    if (!getLoginProof()) {
+      setMsg("Email verification expired. Please sign in again.");
     }
   }, [isFromCreate]);
 
@@ -42,7 +54,7 @@ export default function MFA({ setAuthed }) {
     try {
       const res = isFromCreate
         ? await API.post("/admin/enroll-mfa", { adminId: id })
-        : await API.post("/admin/setup-mfa");
+        : await API.post("/admin/setup-mfa", { emailProofToken: getLoginProof() });
 
       setQr(res.data.qrImage);
       setMsg(
@@ -70,14 +82,28 @@ export default function MFA({ setAuthed }) {
 
       // CASE 2: Normal login. The server stamps an mfaAuthTime claim bound to
       // this sign-in; the ID token must be force-refreshed to carry it.
-      await API.post("/admin/verify-mfa", { code });
+      await API.post("/admin/verify-mfa", {
+        code,
+        emailProofToken: getLoginProof(),
+      });
       await getIdToken(true);
       clearSession();
+      clearLoginProof();
 
       setAuthed(true);
       return navigate("/dashboard", { replace: true });
     } catch (err) {
-      setMsg(err.response?.data?.message || "Invalid OTP code");
+      const failure = err.response?.data;
+
+      // The email proof lapsed part-way through enrolment. Nothing here can
+      // recover it — a new code has to be requested from the login page.
+      if (failure?.code === "EMAIL_NOT_VERIFIED") {
+        clearLoginProof();
+        setMsg("Email verification expired. Please sign in again.");
+        return;
+      }
+
+      setMsg(failure?.message || "Invalid OTP code");
     } finally {
       setLoading(false);
     }
@@ -207,14 +233,13 @@ export default function MFA({ setAuthed }) {
                       type="text"
                       inputMode="numeric"
                       autoComplete="one-time-code"
-                      maxLength={8}
                       value={code}
                       disabled={!codeUnlocked || loading}
                       onChange={(e) =>
-                        setCode(e.target.value.replace(/[^0-9]/g, ""))
+                        setCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 8))
                       }
                       placeholder="00000000"
-                      className="w-full text-center text-2xl font-mono bg-slate-800/50 border border-slate-700 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="w-full text-center text-2xl font-mono tracking-[0.55em] indent-[0.55em] bg-slate-800/50 border border-slate-700 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
                     />
                     <p className="text-xs text-slate-400 text-center">
                       {codeUnlocked

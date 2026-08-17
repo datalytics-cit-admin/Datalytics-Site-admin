@@ -13,6 +13,7 @@ import {
   EyeOff,
   Key,
 } from "lucide-react";
+import EmailVerifyModal from "../components/EmailVerifyModal";
 import MfaEnrollModal from "../components/MfaEnrollModal";
 import { useNavigationGuard } from "../hooks/useNavigationGuard";
 
@@ -44,11 +45,16 @@ export default function AddAdmin() {
   const [loading, setLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
 
-  // Creation is a three-step handshake and only the last step writes anything:
-  //   form → validate the details → enrol MFA → create
-  // Until the code verifies there is no admin record, no sign-in account and no
+  // Creation is a handshake and only the last step writes anything:
+  //   form → validate → verify the email → enrol MFA → create
+  // Until both codes verify there is no admin record, no sign-in account and no
   // uploaded image, so abandoning the flow needs no cleanup.
-  const [phase, setPhase] = useState("form"); // "form" | "mfa"
+  const [phase, setPhase] = useState("form"); // "form" | "email" | "mfa"
+  const [emailToken, setEmailToken] = useState("");
+  const [emailVerifiedToken, setEmailVerifiedToken] = useState("");
+  const [emailStatus, setEmailStatus] = useState("sending"); // sending|awaiting|verifying
+  const [emailMsg, setEmailMsg] = useState("");
+  const [emailNotice, setEmailNotice] = useState("");
   const [qr, setQr] = useState("");
   const [draftToken, setDraftToken] = useState("");
   const [mfaStatus, setMfaStatus] = useState("idle"); // idle|generating|ready|submitting
@@ -191,7 +197,7 @@ export default function AddAdmin() {
 
   // The form is frozen while its details are being checked and for the whole
   // MFA step — the draft is bound to exactly these values.
-  const formLocked = loading || phase === "mfa";
+  const formLocked = loading || phase !== "form";
 
   const showError = (text) => {
     setMsgTone("error");
@@ -224,10 +230,18 @@ export default function AddAdmin() {
 
       setQr("");
       setDraftToken("");
+      setEmailVerifiedToken("");
       setMfaMsg("");
       setMfaStatus("idle");
       setConfirmingAbort(false);
-      setPhase("mfa");
+      setPhase("email");
+
+      // Hand the in-flight guard over before starting the send. Without this,
+      // sendEmailCode's own guard sees the flag this function is still holding
+      // and returns immediately — the modal opens on "Sending the code..." and
+      // no request is ever made.
+      inFlightRef.current = false;
+      await sendEmailCode();
     } catch (err) {
       showError(err.response?.data?.message || "Error");
     } finally {
@@ -236,7 +250,72 @@ export default function AddAdmin() {
     }
   };
 
-  // STEP 2 — issue the enrolment QR. Still writes nothing: the secret comes
+  // STEP 2 — prove the address is real and reachable. Writes nothing: the code
+  // is emailed, and only a keyed hash of it travels in the returned token.
+  const sendEmailCode = useCallback(async () => {
+    if (inFlightRef.current) return;
+
+    inFlightRef.current = true;
+    setEmailStatus("sending");
+    setEmailMsg("");
+    setEmailNotice("");
+
+    try {
+      const { data } = await API.post("/admin/add/email-code", detailsPayload());
+      setEmailToken(data.emailToken);
+      setEmailStatus("awaiting");
+
+      // The server falls back to logging the code when SMTP is unconfigured;
+      // say so plainly rather than leaving someone waiting for an email that
+      // was never sent. "pending" means it is still being sent — the code box
+      // opens now and the message lands a moment later.
+      if (data.delivered === false) {
+        setEmailNotice(
+          "Email delivery is not configured on the server, so the code was written to the server log."
+        );
+      } else if (data.delivered === "pending") {
+        // setEmailNotice("The email is on its way — it may take a few seconds to arrive.");
+      }
+    } catch (err) {
+      setEmailStatus("awaiting");
+      setEmailMsg(err.response?.data?.message || "Could not send the code");
+    } finally {
+      inFlightRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name, rollNo, email, course, gender, year, batch, position, linkedin, phone]);
+
+  const verifyEmailCode = useCallback(
+    async (code) => {
+      if (inFlightRef.current) return;
+
+      inFlightRef.current = true;
+      setEmailStatus("verifying");
+      setEmailMsg("");
+
+      try {
+        const { data } = await API.post("/admin/add/email-verify", {
+          ...detailsPayload(),
+          emailToken,
+          emailCode: code,
+        });
+
+        setEmailVerifiedToken(data.emailVerifiedToken);
+        setMfaStatus("idle");
+        setMfaMsg("");
+        setPhase("mfa");
+      } catch (err) {
+        setEmailStatus("awaiting");
+        setEmailMsg(err.response?.data?.message || "Could not verify the code");
+      } finally {
+        inFlightRef.current = false;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [emailToken, name, rollNo, email, course, gender, year, batch, position, linkedin, phone]
+  );
+
+  // STEP 3 — issue the enrolment QR. Still writes nothing: the secret comes
   // back inside a signed, short-lived token that the create request hands back.
   const generateQr = useCallback(async () => {
     if (inFlightRef.current) return;
@@ -246,7 +325,10 @@ export default function AddAdmin() {
     setMfaMsg("");
 
     try {
-      const { data } = await API.post("/admin/add/draft", detailsPayload());
+      const { data } = await API.post("/admin/add/draft", {
+        ...detailsPayload(),
+        emailVerifiedToken,
+      });
       setQr(data.qrImage);
       setDraftToken(data.draftToken);
       setMfaStatus("ready");
@@ -257,9 +339,9 @@ export default function AddAdmin() {
       inFlightRef.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qr, name, rollNo, email, course, gender, year, batch, position, linkedin, phone]);
+  }, [qr, emailVerifiedToken, name, rollNo, email, course, gender, year, batch, position, linkedin, phone]);
 
-  // STEP 3 — the only call that creates anything. The server verifies the code
+  // STEP 4 — the only call that creates anything. The server verifies the code
   // against the draft before it touches Firestore, Firebase Auth or Cloudinary.
   const completeCreation = useCallback(
     async (code) => {
@@ -328,6 +410,10 @@ export default function AddAdmin() {
     setPhase("form");
     setQr("");
     setDraftToken("");
+    setEmailToken("");
+    setEmailVerifiedToken("");
+    setEmailMsg("");
+    setEmailNotice("");
     setMfaStatus("idle");
     setMfaMsg("");
     setConfirmingAbort(false);
@@ -349,10 +435,10 @@ export default function AddAdmin() {
   // Browser Back and tab close both land on the same confirmation the Cancel
   // button raises. Nothing is at risk either way; this stops the creator from
   // silently losing a filled-in form.
-  useNavigationGuard(phase === "mfa", requestAbort);
+  useNavigationGuard(phase !== "form", requestAbort);
 
   const leavePage = () => {
-    if (phase === "mfa") return requestAbort();
+    if (phase !== "form") return requestAbort();
     navigate("/dashboard/admins");
   };
 
@@ -778,6 +864,8 @@ export default function AddAdmin() {
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 Checking details...
               </>
+            ) : phase === "email" ? (
+              "Verify the email to continue"
             ) : phase === "mfa" ? (
               "Finish MFA setup to create"
             ) : (
@@ -787,6 +875,21 @@ export default function AddAdmin() {
           </fieldset>
         </form>
       </div>
+
+      {phase === "email" && (
+        <EmailVerifyModal
+          email={email.trim()}
+          status={emailStatus}
+          error={emailMsg}
+          notice={emailNotice}
+          confirmingAbort={confirmingAbort}
+          onResend={sendEmailCode}
+          onSubmit={verifyEmailCode}
+          onRequestAbort={requestAbort}
+          onCancelAbort={() => setConfirmingAbort(false)}
+          onConfirmAbort={abortCreation}
+        />
+      )}
 
       {/* Remounted per QR so the typed code never outlives the secret it was
           for, and unmounted on abort so nothing survives a cancelled attempt. */}

@@ -1,5 +1,15 @@
 import axios from "axios";
+import { signOut } from "firebase/auth";
 import { auth, authReady, getIdToken } from "./firebase";
+
+// Deliberately does NOT import clearSession from ./session — that module
+// imports this one, and the cycle is avoidable: every path below ends in a full
+// page load, and session.js drops its cache on boot whenever Firebase reports
+// no signed-in user.
+const bounceToLogin = async () => {
+  await signOut(auth).catch(() => {});
+  if (window.location.pathname !== "/login") window.location.replace("/login");
+};
 
 const API = axios.create({
   baseURL: import.meta.env.VITE_API_URL + "/api",
@@ -25,10 +35,22 @@ API.interceptors.response.use(
       return Promise.reject(error);
     }
 
+    // A lapsed second factor sends the user back to sign in, not to a standalone
+    // MFA page. The code prompt only ever appears as a step over the login form,
+    // so there is one place to be when a session is no longer good.
     if (response.data?.code === "MFA_REQUIRED") {
-      if (!window.location.pathname.startsWith("/mfa")) {
-        window.location.replace("/mfa/verify");
+      if (window.location.pathname !== "/login") {
+        window.location.replace("/login");
       }
+      return Promise.reject(error);
+    }
+
+    // The account was locked down from a sign-in alert. Retrying is pointless
+    // and actively harmful: the refresh token is revoked, so getIdToken(true)
+    // below would throw and replace this error with an opaque Firebase one,
+    // leaving the user on a broken page instead of the login screen.
+    if (response.data?.code === "SESSION_REVOKED") {
+      await bounceToLogin();
       return Promise.reject(error);
     }
 
@@ -39,7 +61,17 @@ API.interceptors.response.use(
     }
 
     config._retried = true;
-    const fresh = await getIdToken(true);
+
+    // A revoked refresh token makes this throw. Treat it as "you are signed
+    // out" rather than letting it surface as an unrelated failure.
+    let fresh;
+    try {
+      fresh = await getIdToken(true);
+    } catch {
+      await bounceToLogin();
+      return Promise.reject(error);
+    }
+
     if (fresh) config.headers.Authorization = `Bearer ${fresh}`;
     return API(config);
   }

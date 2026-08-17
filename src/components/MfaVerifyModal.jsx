@@ -106,6 +106,14 @@ export default function MfaVerifyModal({
           </div>
         ) : (
           <form onSubmit={submit} className="p-6 space-y-5">
+            {/* Mirrors the header on the email-code step, so the two prompts
+                read as one sequence rather than an unexplained second ask. */}
+            <div className="flex items-center gap-2 text-xs font-semibold tracking-wide uppercase text-slate-500">
+              <span className="text-emerald-400">Step 2 of 2</span>
+              <span className="h-px flex-1 bg-slate-700/60" />
+              <span>Email verified</span>
+            </div>
+
             <div className="rounded-xl border border-slate-700/50 bg-slate-800/40 p-6 space-y-4">
               <div className="text-center">
                 <Smartphone className="w-12 h-12 text-emerald-400 mx-auto mb-3" />
@@ -123,14 +131,13 @@ export default function MfaVerifyModal({
                 type="text"
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                maxLength={CODE_LENGTH}
                 value={code}
                 disabled={isVerifying}
                 onChange={(e) =>
                   setCode(e.target.value.replace(/[^0-9]/g, "").slice(0, CODE_LENGTH))
                 }
                 placeholder={"0".repeat(CODE_LENGTH)}
-                className="w-full text-center text-2xl font-mono tracking-widest bg-slate-900/60 border border-slate-700 rounded-xl p-4 text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="w-full text-center text-2xl font-mono tracking-[0.55em] indent-[0.55em] bg-slate-900/60 border border-slate-700 rounded-xl p-4 text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
               />
               <p className="text-xs text-slate-400 text-center">
                 Code from your authenticator app

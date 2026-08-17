@@ -5,6 +5,8 @@ import { signInWithEmailAndPassword, signOut } from "firebase/auth";
 import API from "../services/api";
 import { clearSession } from "../services/session";
 import { auth, getIdToken } from "../services/firebase";
+import { setLoginProof, clearLoginProof } from "../services/loginProof";
+import LoginEmailCodeModal from "../components/LoginEmailCodeModal";
 import MfaVerifyModal from "../components/MfaVerifyModal";
 import { useNavigationGuard } from "../hooks/useNavigationGuard";
 
@@ -19,17 +21,69 @@ export default function Login({ setAuthed }) {
   const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
 
-  // The second factor runs here, over the form, rather than on its own route.
-  // Between the password and the code the user holds a Firebase token but no
-  // server session — a state that should not be navigable to, because leaving
-  // it has to mean abandoning the sign-in.
-  const [mfaOpen, setMfaOpen] = useState(false);
-  const [mfaStatus, setMfaStatus] = useState("idle"); // "idle" | "verifying"
-  const [mfaMsg, setMfaMsg] = useState("");
+  // Both remaining factors run here, over the form, rather than on their own
+  // routes. Between the password and the codes the user holds a Firebase token
+  // but no server session — a state that should not be navigable to, because
+  // leaving it has to mean abandoning the sign-in.
+  //
+  //   "form"  nothing in flight
+  //   "email" the code we mailed to the address on the admin record
+  //   "mfa"   the code from the authenticator app
+  const [step, setStep] = useState("form");
   const [confirmingAbort, setConfirmingAbort] = useState(false);
 
-  const mfaStatusRef = useRef(mfaStatus);
-  mfaStatusRef.current = mfaStatus;
+  // Email step
+  const [emailStatus, setEmailStatus] = useState("idle"); // "sending" | "awaiting" | "verifying"
+  const [emailMsg, setEmailMsg] = useState("");
+  const [emailNotice, setEmailNotice] = useState("");
+  const [emailToken, setEmailToken] = useState("");
+  const [codeSentTo, setCodeSentTo] = useState("");
+
+  // Authenticator step
+  const [mfaStatus, setMfaStatus] = useState("idle"); // "idle" | "verifying"
+  const [mfaMsg, setMfaMsg] = useState("");
+  const [proofToken, setProofToken] = useState("");
+  // Whether this account still has to enrol an authenticator, read once from
+  // /mfa/state before the email step and acted on after it.
+  const [needsEnrolment, setNeedsEnrolment] = useState(false);
+
+  // The abort paths must not fire mid-request, and they are reached from a
+  // keydown handler and the browser Back button as well as from a click — none
+  // of which see fresh state through a closure.
+  const busyRef = useRef(false);
+  busyRef.current =
+    emailStatus === "sending" ||
+    emailStatus === "verifying" ||
+    mfaStatus === "verifying";
+
+  // Asks the server to mail a code. Shared by the initial send and Resend, so
+  // the two cannot drift.
+  const requestEmailCode = useCallback(async ({ resend = false } = {}) => {
+    setEmailStatus("sending");
+    setEmailMsg("");
+    setEmailNotice("");
+
+    try {
+      const { data } = await API.post("/admin/login/email-code");
+      setEmailToken(data.emailToken);
+      setCodeSentTo(data.email || "");
+      setEmailStatus("awaiting");
+
+      // SMTP is not configured in development, where the server logs the code
+      // instead of sending it. Saying so beats a silent wait for mail that is
+      // never coming.
+      if (data.delivered === false) {
+        setEmailNotice("Email delivery is not configured — check the server log for the code.");
+      } else if (resend) {
+        setEmailNotice("A new code is on its way.");
+      }
+      return true;
+    } catch (err) {
+      setEmailStatus("awaiting");
+      setEmailMsg(err.response?.data?.message || "Could not send the sign-in code.");
+      return false;
+    }
+  }, []);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -39,25 +93,33 @@ export default function Login({ setAuthed }) {
 
     try {
       // Firebase verifies the password and issues an ID token. That token alone
-      // is NOT a session — the server still requires the second factor.
+      // is NOT a session — the server still requires the email code and the
+      // second factor.
       await signInWithEmailAndPassword(auth, email.trim(), password);
       clearSession();
+      clearLoginProof();
 
       const { data } = await API.get("/admin/mfa/state");
 
-      if (!data.mfaEnabled) {
-        return navigate("/mfa/setup", { state: { fromCreate: false } });
-      }
-      if (!data.mfaSatisfied) {
-        setMfaMsg("");
-        setConfirmingAbort(false);
-        setMfaStatus("idle");
-        setMfaOpen(true);
-        return;
+      // Already satisfied for this sign-in: both factors were completed against
+      // this same auth_time, so re-challenging would be asking twice.
+      if (data.mfaSatisfied) {
+        setAuthed(true);
+        return navigate("/dashboard");
       }
 
-      setAuthed(true);
-      navigate("/dashboard");
+      // Every other route into MFA — enrolment included — goes through the
+      // email step first. Remembered here rather than re-fetched afterwards,
+      // because whether this account has an authenticator cannot change while
+      // the user is reading their inbox.
+      setNeedsEnrolment(!data.mfaEnabled);
+      setConfirmingAbort(false);
+      setEmailToken("");
+      setProofToken("");
+      setMfaStatus("idle");
+      setMfaMsg("");
+      setStep("email");
+      await requestEmailCode();
     } catch (err) {
       const code = err?.code || "";
       if (code.startsWith("auth/")) {
@@ -70,48 +132,115 @@ export default function Login({ setAuthed }) {
       } else {
         setMsg(err.response?.data?.message || "Login failed");
       }
+      setStep("form");
     } finally {
       setLoading(false);
     }
   };
 
+  // Exchanges the emailed code for the proof the MFA endpoints require. Issues
+  // no session: this is one factor of two.
+  const verifyEmailCode = useCallback(
+    async (code) => {
+      if (busyRef.current) return;
+
+      setEmailStatus("verifying");
+      setEmailMsg("");
+      setEmailNotice("");
+
+      try {
+        const { data } = await API.post("/admin/login/email-verify", {
+          emailToken,
+          code,
+        });
+
+        // Persisted as well as held in state, because the enrolment branch is a
+        // real route and a reload there would otherwise lose it.
+        setProofToken(data.emailProofToken);
+        setLoginProof(data.emailProofToken);
+
+        if (needsEnrolment) {
+          // No authenticator on this account yet — enrol first. The route reads
+          // the proof back out of sessionStorage.
+          setStep("form");
+          return navigate("/mfa/setup", { state: { fromCreate: false } });
+        }
+
+        setEmailStatus("awaiting");
+        setStep("mfa");
+      } catch (err) {
+        const failure = err.response?.data;
+        setEmailStatus("awaiting");
+        setEmailMsg(failure?.message || "Could not verify that code.");
+
+        // A dead token cannot be retried with the same digits — clear the box's
+        // token so the only way forward is Resend.
+        if (failure?.code === "LOGIN_CODE_EXPIRED" || failure?.code === "LOGIN_CODE_STALE") {
+          setEmailToken("");
+        }
+      }
+    },
+    [emailToken, needsEnrolment, navigate]
+  );
+
   // Completes the sign-in. The server stamps an mfaAuthTime claim bound to this
   // specific sign-in, so the ID token must be force-refreshed to carry it.
   const verifyMfa = useCallback(
     async (code) => {
-      if (mfaStatusRef.current === "verifying") return;
+      if (busyRef.current) return;
 
       setMfaStatus("verifying");
       setMfaMsg("");
 
       try {
-        await API.post("/admin/verify-mfa", { code });
+        await API.post("/admin/verify-mfa", { code, emailProofToken: proofToken });
         await getIdToken(true);
         clearSession();
+        clearLoginProof();
 
-        setMfaOpen(false);
+        setStep("form");
         setAuthed(true);
         navigate("/dashboard", { replace: true });
       } catch (err) {
+        const failure = err.response?.data;
         setMfaStatus("idle");
-        setMfaMsg(err.response?.data?.message || "Invalid OTP code");
+
+        // The email proof died before the authenticator code was entered — most
+        // likely the user sat on this screen for over ten minutes. Send them
+        // back to the email step rather than letting them retype TOTP codes
+        // that can never be accepted.
+        if (failure?.code === "EMAIL_NOT_VERIFIED") {
+          clearLoginProof();
+          setProofToken("");
+          setStep("email");
+          setEmailMsg("That took a while — here is a fresh code.");
+          return void requestEmailCode({ resend: true });
+        }
+
+        setMfaMsg(failure?.message || "Invalid OTP code");
       }
     },
-    [navigate, setAuthed]
+    [navigate, setAuthed, proofToken, requestEmailCode]
   );
 
   // Abandoning here must actually undo the half-finished sign-in: Firebase
   // still holds a valid token for this account, and leaving it in place would
-  // mean a signed-in browser that never passed the second factor.
+  // mean a signed-in browser that never passed the remaining factors.
   const abortLogin = useCallback(async () => {
-    if (mfaStatusRef.current === "verifying") return;
+    if (busyRef.current) return;
 
-    setMfaOpen(false);
+    setStep("form");
     setConfirmingAbort(false);
+    setEmailStatus("idle");
+    setEmailMsg("");
+    setEmailNotice("");
+    setEmailToken("");
     setMfaStatus("idle");
     setMfaMsg("");
+    setProofToken("");
     setPassword("");
 
+    clearLoginProof();
     await signOut(auth).catch(() => {});
     clearSession();
 
@@ -120,16 +249,31 @@ export default function Login({ setAuthed }) {
   }, []);
 
   const requestAbort = useCallback(() => {
-    if (mfaStatusRef.current !== "verifying") setConfirmingAbort(true);
+    if (!busyRef.current) setConfirmingAbort(true);
   }, []);
 
   // Browser Back and tab close both raise the same confirmation the Cancel
   // button does, instead of silently stranding a half-authenticated browser.
-  useNavigationGuard(mfaOpen, requestAbort);
+  useNavigationGuard(step !== "form", requestAbort);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
-      {mfaOpen && (
+      {step === "email" && (
+        <LoginEmailCodeModal
+          email={codeSentTo || email.trim()}
+          status={emailStatus}
+          error={emailMsg}
+          notice={emailNotice}
+          confirmingAbort={confirmingAbort}
+          onResend={() => requestEmailCode({ resend: true })}
+          onSubmit={verifyEmailCode}
+          onRequestAbort={requestAbort}
+          onCancelAbort={() => setConfirmingAbort(false)}
+          onConfirmAbort={abortLogin}
+        />
+      )}
+
+      {step === "mfa" && (
         <MfaVerifyModal
           email={email.trim()}
           status={mfaStatus}

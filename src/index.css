@@ -9,3 +9,43 @@
 body {
   margin: 0;
 }
+
+/* Scrollbars.
+ *
+ * The browser default is a light-mode artifact — a white gutter cutting down
+ * the side of a slate UI. This themes every scrollable element in the portal,
+ * not just the page: sidebars, modals, textareas, overflowing tables.
+ *
+ * Both syntaxes are required. The standard properties cover Firefox; the
+ * ::-webkit-* pseudo-elements cover Chrome, Edge and Safari, which still
+ * ignore scrollbar-color. Anything setting its own scrollbar rules through a
+ * class (see the Tailwind arbitrary variants on the enrolment modal) wins on
+ * specificity and stays hidden.
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #475569 transparent; /* slate-600 thumb, no track */
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: #475569; /* slate-600 */
+  border-radius: 9999px;
+  /* A transparent border plus content-box clipping insets the thumb, so it
+     floats in the gutter instead of butting against the window edge. */
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #6366f1; /* indigo-500 — the active-nav accent */
+}
