@@ -1,22 +1,40 @@
 // admin/src/pages/Login.jsx
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { signInWithEmailAndPassword, signOut } from "firebase/auth";
 import API from "../services/api";
 import { clearSession } from "../services/session";
-import { auth } from "../services/firebase";
+import { auth, getIdToken } from "../services/firebase";
+import MfaVerifyModal from "../components/MfaVerifyModal";
+import { useNavigationGuard } from "../hooks/useNavigationGuard";
 
 export default function Login({ setAuthed }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState("");
+  // A cancelled sign-in is a notice, not a failure — the red shaking box reads
+  // as "something went wrong", which this is not.
+  const [msgTone, setMsgTone] = useState("error"); // "error" | "info"
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
 
+  // The second factor runs here, over the form, rather than on its own route.
+  // Between the password and the code the user holds a Firebase token but no
+  // server session — a state that should not be navigable to, because leaving
+  // it has to mean abandoning the sign-in.
+  const [mfaOpen, setMfaOpen] = useState(false);
+  const [mfaStatus, setMfaStatus] = useState("idle"); // "idle" | "verifying"
+  const [mfaMsg, setMfaMsg] = useState("");
+  const [confirmingAbort, setConfirmingAbort] = useState(false);
+
+  const mfaStatusRef = useRef(mfaStatus);
+  mfaStatusRef.current = mfaStatus;
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setMsg("");
+    setMsgTone("error");
     setLoading(true);
 
     try {
@@ -31,7 +49,11 @@ export default function Login({ setAuthed }) {
         return navigate("/mfa/setup", { state: { fromCreate: false } });
       }
       if (!data.mfaSatisfied) {
-        return navigate("/mfa/verify", { state: { fromCreate: false } });
+        setMfaMsg("");
+        setConfirmingAbort(false);
+        setMfaStatus("idle");
+        setMfaOpen(true);
+        return;
       }
 
       setAuthed(true);
@@ -53,8 +75,73 @@ export default function Login({ setAuthed }) {
     }
   };
 
+  // Completes the sign-in. The server stamps an mfaAuthTime claim bound to this
+  // specific sign-in, so the ID token must be force-refreshed to carry it.
+  const verifyMfa = useCallback(
+    async (code) => {
+      if (mfaStatusRef.current === "verifying") return;
+
+      setMfaStatus("verifying");
+      setMfaMsg("");
+
+      try {
+        await API.post("/admin/verify-mfa", { code });
+        await getIdToken(true);
+        clearSession();
+
+        setMfaOpen(false);
+        setAuthed(true);
+        navigate("/dashboard", { replace: true });
+      } catch (err) {
+        setMfaStatus("idle");
+        setMfaMsg(err.response?.data?.message || "Invalid OTP code");
+      }
+    },
+    [navigate, setAuthed]
+  );
+
+  // Abandoning here must actually undo the half-finished sign-in: Firebase
+  // still holds a valid token for this account, and leaving it in place would
+  // mean a signed-in browser that never passed the second factor.
+  const abortLogin = useCallback(async () => {
+    if (mfaStatusRef.current === "verifying") return;
+
+    setMfaOpen(false);
+    setConfirmingAbort(false);
+    setMfaStatus("idle");
+    setMfaMsg("");
+    setPassword("");
+
+    await signOut(auth).catch(() => {});
+    clearSession();
+
+    setMsgTone("info");
+    setMsg("Sign-in cancelled. Enter your email and password to try again.");
+  }, []);
+
+  const requestAbort = useCallback(() => {
+    if (mfaStatusRef.current !== "verifying") setConfirmingAbort(true);
+  }, []);
+
+  // Browser Back and tab close both raise the same confirmation the Cancel
+  // button does, instead of silently stranding a half-authenticated browser.
+  useNavigationGuard(mfaOpen, requestAbort);
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
+      {mfaOpen && (
+        <MfaVerifyModal
+          email={email.trim()}
+          status={mfaStatus}
+          error={mfaMsg}
+          confirmingAbort={confirmingAbort}
+          onSubmit={verifyMfa}
+          onRequestAbort={requestAbort}
+          onCancelAbort={() => setConfirmingAbort(false)}
+          onConfirmAbort={abortLogin}
+        />
+      )}
+
       {/* Grid Pattern Overlay */}
       <div className="absolute inset-0 bg-[linear-linear(rgba(255,255,255,0.02)_1px,transparent_1px),linear-linear(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-size-[64px_64px] mask-[radial-linear(ellipse_80%_50%_at_50%_50%,black,transparent)]"></div>
 
@@ -272,10 +359,18 @@ export default function Login({ setAuthed }) {
 
               {/* Error Message */}
               {msg && (
-                <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl animate-shake">
+                <div
+                  className={`p-4 rounded-xl ${
+                    msgTone === "info"
+                      ? "bg-amber-500/10 border border-amber-500/30"
+                      : "bg-red-500/10 border border-red-500/30 animate-shake"
+                  }`}
+                >
                   <div className="flex items-center justify-center space-x-2">
                     <svg
-                      className="w-5 h-5 text-red-400"
+                      className={`w-5 h-5 ${
+                        msgTone === "info" ? "text-amber-400" : "text-red-400"
+                      }`}
                       fill="none"
                       stroke="currentColor"
                       viewBox="0 0 24 24"
@@ -287,7 +382,13 @@ export default function Login({ setAuthed }) {
                         d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                       />
                     </svg>
-                    <p className="text-sm text-red-400 font-medium">{msg}</p>
+                    <p
+                      className={`text-sm font-medium ${
+                        msgTone === "info" ? "text-amber-300" : "text-red-400"
+                      }`}
+                    >
+                      {msg}
+                    </p>
                   </div>
                 </div>
               )}
