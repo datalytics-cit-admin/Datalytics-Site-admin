@@ -1,40 +1,11 @@
 // admin/src/components/EmailVerifyModal.jsx
 import { useEffect, useRef, useState } from "react";
 import { Mail, AlertTriangle, X, ShieldCheck } from "lucide-react";
+import GmailLogo from "./GmailLogo";
 
 const CODE_LENGTH = 8;
 const RESEND_COOLDOWN_S = 60;
-
-/**
- * The Gmail mark, inlined rather than hotlinked — the modal has to render even
- * when the network is the thing that's broken.
- */
-function GmailLogo({ className = "" }) {
-  return (
-    <svg viewBox="0 0 48 48" className={className} role="img" aria-label="Gmail">
-      <path
-        fill="#4caf50"
-        d="M45,16.2l-5,2.75l-5,4.75L35,40h7c1.657,0,3-1.343,3-3V16.2z"
-      />
-      <path
-        fill="#1e88e5"
-        d="M3,16.2l3.614,1.71L13,23.7V40H6c-1.657,0-3-1.343-3-3V16.2z"
-      />
-      <polygon
-        fill="#e53935"
-        points="35,11.2 24,19.45 13,11.2 12,17 13,23.7 24,31.95 35,23.7 36,17"
-      />
-      <path
-        fill="#c62828"
-        d="M3,12.298V16.2l10,7.5V11.2L9.876,8.859C9.132,8.301,8.228,8,7.298,8h0C4.924,8,3,9.924,3,12.298z"
-      />
-      <path
-        fill="#fbc02d"
-        d="M45,12.298V16.2l-10,7.5V11.2l3.124-2.341C38.868,8.301,39.772,8,40.702,8h0C43.076,8,45,9.924,45,12.298z"
-      />
-    </svg>
-  );
-}
+const NOTICE_TTL_MS = 10_000;
 
 /**
  * Proves the admin's email address exists and is reachable, before anything is
@@ -83,6 +54,22 @@ export default function EmailVerifyModal({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [busy, onRequestAbort]);
 
+  // The notice is the caller's state, but how long it stays on screen is a
+  // presentation concern — it confirms something that already happened, so it
+  // should not hold a slot in the layout once it has been read.
+  //
+  // What is remembered is the text that has been retired, not a shown/hidden
+  // flag: a *different* message must appear even while the last one is retired,
+  // and only the timer writes state, so the effect never renders in a loop.
+  const [retired, setRetired] = useState("");
+  const noticeShown = Boolean(notice) && notice !== retired;
+
+  useEffect(() => {
+    if (!noticeShown) return;
+    const id = setTimeout(() => setRetired(notice), NOTICE_TTL_MS);
+    return () => clearTimeout(id);
+  }, [noticeShown, notice]);
+
   const submit = (e) => {
     e.preventDefault();
     if (canSubmit) onSubmit(code);
@@ -90,6 +77,9 @@ export default function EmailVerifyModal({
 
   const resend = () => {
     if (busy || cooldown > 0) return;
+    // Re-arms the notice, so a second resend confirms itself even when the
+    // caller sets the very same sentence it set last time.
+    setRetired("");
     setCode("");
     setCooldown(RESEND_COOLDOWN_S);
     onResend();
@@ -195,10 +185,8 @@ export default function EmailVerifyModal({
               </button>
             </div>
 
-            {notice && (
-              <div className="p-3 rounded-xl text-sm text-center bg-slate-700/30 border border-slate-600/40 text-slate-300">
-                {notice}
-              </div>
+            {notice && noticeShown && (
+              <p className="text-xs text-center text-slate-400">{notice}</p>
             )}
 
             {error && (

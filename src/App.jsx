@@ -2,6 +2,7 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { getSession, clearSession, peekSession } from "./services/session";
+import { isPublicPath } from "./services/api";
 import DashboardLayout from "./components/DashboardLayout";
 
 // The two landing screens stay in the main bundle. Splitting them out cost more
@@ -14,6 +15,7 @@ import MembersList from "./pages/MembersList";
 // Everything else is fetched on first visit. Opening the dashboard no longer
 // also downloads the member editor, the event forms and the admin CRUD.
 const MFA = lazy(() => import("./pages/MFA"));
+const ResetPassword = lazy(() => import("./pages/ResetPassword"));
 const AddMember = lazy(() => import("./pages/AddMember"));
 const EditMember = lazy(() => import("./pages/EditMember"));
 const AdminList = lazy(() => import("./pages/AdminList"));
@@ -121,10 +123,19 @@ export default function App() {
   // If it fails, the api interceptor redirects to /login or /mfa.
   const knownAdmin = peekSession();
 
-  const [checking, setChecking] = useState(knownAdmin === null);
+  // A page reachable while signed out must not open by demanding a session.
+  // Without this the reset link 401s on /admin/me before anything renders and
+  // the interceptor sends the user to /login — the one place they cannot get
+  // out of, since the whole reason they followed that link is being locked out.
+  const publicRoute = isPublicPath();
+
+  const [checking, setChecking] = useState(!publicRoute && knownAdmin === null);
   const [authed, setAuthed] = useState(knownAdmin !== null);
 
   useEffect(() => {
+    // `checking` already starts false for these, so there is nothing to unset.
+    if (publicRoute) return;
+
     getSession()
       .then(() => setAuthed(true))
       .catch(() => {
@@ -132,7 +143,7 @@ export default function App() {
         setAuthed(false);
       })
       .finally(() => setChecking(false));
-  }, []);
+  }, [publicRoute]);
 
   if (checking) {
     return (
@@ -160,6 +171,20 @@ export default function App() {
           </>
         }
       />
+      {/* Reached from a lock-down email by someone who cannot sign in, so it
+          must stay public. Its own authority is the signed token in the URL,
+          and the server re-checks that plus an emailed code and the
+          authenticator before any password changes. */}
+      <Route
+        path="/reset-password"
+        element={
+          <>
+            <PageTitle title="Reset Password" />
+            <ResetPassword />
+          </>
+        }
+      />
+
       {/* The verification prompt is a step over the login form, never its own
           page. Anything still pointing here (an old bookmark, a stale tab) goes
           to sign-in, where that step lives. */}

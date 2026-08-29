@@ -1,9 +1,11 @@
 // admin/src/components/LoginEmailCodeModal.jsx
 import { useEffect, useRef, useState } from "react";
 import { Mail, AlertTriangle, X, ShieldCheck } from "lucide-react";
+import GmailLogo from "./GmailLogo";
 
 const CODE_LENGTH = 8;
 const RESEND_COOLDOWN_S = 60;
+const NOTICE_TTL_MS = 10_000;
 
 // Shows the address without printing it in full over someone's shoulder. The
 // user already knows which account they typed, so this is a reminder of where
@@ -72,6 +74,22 @@ export default function LoginEmailCodeModal({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [busy, onRequestAbort]);
 
+  // The notice is the caller's state, but how long it stays on screen is a
+  // presentation concern — it confirms something that already happened, so it
+  // should not hold a slot in the layout once it has been read.
+  //
+  // What is remembered is the text that has been retired, not a shown/hidden
+  // flag: a *different* message must appear even while the last one is retired,
+  // and only the timer writes state, so the effect never renders in a loop.
+  const [retired, setRetired] = useState("");
+  const noticeShown = Boolean(notice) && notice !== retired;
+
+  useEffect(() => {
+    if (!noticeShown) return;
+    const id = setTimeout(() => setRetired(notice), NOTICE_TTL_MS);
+    return () => clearTimeout(id);
+  }, [noticeShown, notice]);
+
   const submit = (e) => {
     e.preventDefault();
     if (canSubmit) onSubmit(code);
@@ -79,6 +97,9 @@ export default function LoginEmailCodeModal({
 
   const resend = () => {
     if (busy || cooldown > 0) return;
+    // Re-arms the notice, so a second resend confirms itself even when the
+    // caller sets the very same sentence it set last time.
+    setRetired("");
     setCode("");
     setCooldown(RESEND_COOLDOWN_S);
     onResend();
@@ -150,6 +171,7 @@ export default function LoginEmailCodeModal({
 
             <div className="rounded-xl border border-slate-700/50 bg-slate-800/40 p-6 space-y-4">
               <div className="text-center">
+                <GmailLogo className="w-10 h-10 mx-auto mb-3" />
                 <h3 className="font-semibold text-white mb-2">
                   Enter the {CODE_LENGTH}-digit code
                 </h3>
@@ -186,10 +208,8 @@ export default function LoginEmailCodeModal({
               </button>
             </div>
 
-            {notice && (
-              <div className="p-3 rounded-xl text-sm text-center bg-slate-700/30 border border-slate-600/40 text-slate-300">
-                {notice}
-              </div>
+            {notice && noticeShown && (
+              <p className="text-xs text-center text-slate-400">{notice}</p>
             )}
 
             {error && (

@@ -19,6 +19,33 @@ import { useState, useEffect } from "react";
 import API from "../services/api";
 import { clearSession, useSession } from "../services/session";
 
+/**
+ * The signed-in admin's photo, falling back to the generic icon.
+ *
+ * Two things can go wrong and both land on the same fallback: the record has no
+ * image at all, or it has a URL that no longer loads (a deleted upload, a
+ * blocked host). Tracking the error in state matters — without it a broken URL
+ * renders as the browser's torn-image glyph, which looks like a bug rather than
+ * an admin who never set a picture.
+ */
+function ProfileAvatar({ admin, className = "", iconClassName = "" }) {
+  const [broken, setBroken] = useState(false);
+  const src = admin?.image;
+
+  if (!src || broken) {
+    return <User className={`text-indigo-400 ${iconClassName}`} />;
+  }
+
+  return (
+    <img
+      src={src}
+      alt={admin?.name || "Profile"}
+      onError={() => setBroken(true)}
+      className={`rounded-full object-cover bg-slate-700 ring-1 ring-slate-600/60 shrink-0 ${className}`}
+    />
+  );
+}
+
 export default function DashboardLayout({ setAuthed }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -444,7 +471,11 @@ export default function DashboardLayout({ setAuthed }) {
             {/* Profile section on right */}
             {me && (
               <div className="hidden sm:flex items-center gap-2 sm:gap-3 bg-slate-800/50 border border-slate-700/50 px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl">
-                <User className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-400" />
+                <ProfileAvatar
+                  admin={me}
+                  className="w-8 h-8 sm:w-10 sm:h-10"
+                  iconClassName="w-4 h-4 sm:w-5 sm:h-5"
+                />
 
                 <div className="text-left">
                   <p className="text-sm font-semibold text-white">{me.name}</p>
@@ -474,7 +505,11 @@ export default function DashboardLayout({ setAuthed }) {
             {/* Mobile Profile Info */}
             {me && (
               <div className="sm:hidden flex items-center gap-2 bg-slate-800/50 border border-slate-700/50 px-2 py-1 rounded-lg">
-                <User className="w-4 h-4 text-indigo-400" />
+                <ProfileAvatar
+                  admin={me}
+                  className="w-7 h-7"
+                  iconClassName="w-4 h-4"
+                />
                 <div className="flex flex-col">
                   <span className="text-xs font-semibold text-white">
                     {me.role === "superadmin" ? me.name : "Admin"}

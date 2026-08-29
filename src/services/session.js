@@ -89,6 +89,32 @@ authReady.then((user) => {
   if (!user || (cache?.uid && cache.uid !== user.uid)) clearSession();
 });
 
+// A lock-down is almost never performed in the tab it applies to: the alert is
+// read on a phone, or in another browser, and this tab is left sitting on the
+// dashboard. Nothing here would hear about it until the user happened to click
+// something that made a request — which is why signing out appeared to take
+// several clicks.
+//
+// Re-checking whenever the tab comes back to the front turns "next click" into
+// "the moment you look at it". The check is just the ordinary /admin/me call;
+// the api interceptor is what turns its rejection into a redirect.
+//
+// Throttled, because visibilitychange fires on every alt-tab, and skipped
+// entirely when there is no session to invalidate.
+const FOREGROUND_RECHECK_MS = 30 * 1000;
+let lastForegroundCheck = 0;
+
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    if (!cache) return;
+    if (Date.now() - lastForegroundCheck < FOREGROUND_RECHECK_MS) return;
+
+    lastForegroundCheck = Date.now();
+    (inFlight || fetchSession()).catch(() => {});
+  });
+}
+
 /**
  * The last known admin without any network access — null if nothing is stored.
  * Survives a page reload, which is what lets the dashboard paint immediately.

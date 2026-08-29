@@ -1,6 +1,7 @@
 // admin/src/components/MfaVerifyModal.jsx
 import { useEffect, useRef, useState } from "react";
-import { Shield, Smartphone, AlertTriangle, X } from "lucide-react";
+import { Shield, AlertTriangle, X } from "lucide-react";
+import GoogleAuthenticatorLogo from "./GoogleAuthenticatorLogo";
 
 const CODE_LENGTH = 8;
 
@@ -116,7 +117,7 @@ export default function MfaVerifyModal({
 
             <div className="rounded-xl border border-slate-700/50 bg-slate-800/40 p-6 space-y-4">
               <div className="text-center">
-                <Smartphone className="w-12 h-12 text-emerald-400 mx-auto mb-3" />
+                <GoogleAuthenticatorLogo className="w-16 h-16 mx-auto mb-4" />
                 <h3 className="font-semibold text-white mb-2">
                   Verification Required
                 </h3>

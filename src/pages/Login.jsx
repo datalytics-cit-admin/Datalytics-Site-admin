@@ -10,6 +10,29 @@ import LoginEmailCodeModal from "../components/LoginEmailCodeModal";
 import MfaVerifyModal from "../components/MfaVerifyModal";
 import { useNavigationGuard } from "../hooks/useNavigationGuard";
 
+// Deliberately says nothing about how to lift the hold. This sentence is shown
+// to whoever typed the password — which, on a held account, is exactly the
+// person the hold exists to keep out. The way back in is in the email, and only
+// the mailbox owner has that.
+const HELD_MESSAGE =
+  "This account is Locked by the User. Please contact the user to unlock it.";
+
+/**
+ * Whether the account on this address is currently held. Answers false for
+ * anything it cannot determine — an unknown address, a rate limit, a network
+ * fault — so a check that fails never becomes a login that fails.
+ */
+const isAccountHeld = async (email) => {
+  const address = String(email || "").trim();
+  if (!address) return false;
+  try {
+    const { data } = await API.post("/admin/security/lock-state", { email: address });
+    return Boolean(data?.locked);
+  } catch {
+    return false;
+  }
+};
+
 export default function Login({ setAuthed }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -92,6 +115,23 @@ export default function Login({ setAuthed }) {
     setLoading(true);
 
     try {
+      // Asked BEFORE the password goes to Firebase, on purpose.
+      //
+      // Firebase rejects a wrong password on the client, so the server never
+      // sees the attempt: a held account would answer "invalid email or
+      // password" to a wrong guess and "on hold" to a correct one. That change
+      // of message IS the leak — it tells whoever is guessing that they have
+      // just found the password. Held accounts now answer the same way to every
+      // password, right or wrong.
+      //
+      // A failure here is never allowed to block a sign-in: if the check cannot
+      // run, the flow carries on and the server's own 403 still holds the line.
+      if (await isAccountHeld(email)) {
+        setMsg(HELD_MESSAGE);
+        setStep("form");
+        return;
+      }
+
       // Firebase verifies the password and issues an ID token. That token alone
       // is NOT a session — the server still requires the email code and the
       // second factor.
@@ -130,7 +170,17 @@ export default function Login({ setAuthed }) {
             : "Sign-in failed. Please try again."
         );
       } else {
-        setMsg(err.response?.data?.message || "Login failed");
+        // A held account authenticates against Firebase perfectly well — the
+        // password is still correct — and is refused by the first call that
+        // needs a session. Drop the Firebase session too, so the browser is not
+        // left half signed in to an account it cannot use.
+        if (err.response?.data?.code === "ACCOUNT_LOCKED") {
+          await signOut(auth).catch(() => {});
+          clearSession();
+          setMsg(HELD_MESSAGE);
+        } else {
+          setMsg(err.response?.data?.message || "Login failed");
+        }
       }
       setStep("form");
     } finally {
